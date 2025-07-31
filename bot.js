@@ -76,5 +76,20 @@ bot.hears('📊 Статистика', (ctx) => {
   ctx.reply(`📊 Общая статистика:\n\n👥 Пользователей: ${totalUsers}\n⭐ Всего звёзд: ${totalStars}`);
 });
 
+bot.command('users', (ctx) => {
+  try {
+    const users = db.prepare('SELECT * FROM users').all();
+    if (users.length > 0) {
+      const userList = users.map(user => `ID: ${user.id}, Username: ${user.username || 'Unknown'}, Stars: ${user.stars}`).join('\n');
+      ctx.reply(`Список пользователей:\n${userList}`);
+    } else {
+      ctx.reply('В базе данных нет пользователей.');
+    }
+  } catch (error) {
+    console.error('Ошибка при получении пользователей:', error);
+    ctx.reply('Произошла ошибка при работе с базой данных.');
+  }
+});
+
 bot.launch();
 console.log('🤖 Бот запущен');
