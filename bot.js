@@ -10,6 +10,10 @@ const FARM_COOLDOWN = 60;      // секунд
 const BONUS_COOLDOWN = 3600;   // 1 час
 const REFERRAL_BONUS = 10;     // Бонус за приглашённого
 
+// Администраторы
+const ADMINS = new Set(); // Хранение ID администраторов
+
+// Инициализация пользователя
 function getUser(id, username) {
   let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) {
@@ -27,6 +31,76 @@ function mainMenu() {
   ]).resize();
 }
 
+// Проверка на администратора
+function isAdmin(userId) {
+  return ADMINS.has(userId);
+}
+
+// Команда для добавления администратора
+bot.command('add_admin', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ У вас нет прав для выполнения этой команды.');
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length < 2) {
+    return ctx.reply('❌ Укажите ID пользователя, которого нужно сделать администратором.');
+  }
+
+  const newAdminId = parseInt(args[1]);
+  ADMINS.add(newAdminId);
+  ctx.reply(`✅ Пользователь с ID ${newAdminId} добавлен в администраторы.`);
+});
+
+// Команда для выдачи звёзд
+bot.command('give_stars', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ У вас нет прав для выполнения этой команды.');
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length < 3) {
+    return ctx.reply('❌ Укажите ID пользователя и количество звёзд.');
+  }
+
+  const userId = parseInt(args[1]);
+  const stars = parseInt(args[2]);
+
+  db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(stars, userId);
+  ctx.reply(`✅ Пользователю с ID ${userId} выдано ${stars} звёзд.`);
+});
+
+// Команда для блокировки пользователя
+bot.command('block_user', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ У вас нет прав для выполнения этой команды.');
+  }
+
+  const args = ctx.message.text.split(' ');
+  if (args.length < 2) {
+    return ctx.reply('❌ Укажите ID пользователя для блокировки.');
+  }
+
+  const userId = parseInt(args[1]);
+  db.prepare('UPDATE users SET blocked = 1 WHERE id = ?').run(userId);
+  ctx.reply(`✅ Пользователь с ID ${userId} заблокирован.`);
+});
+
+// Команда для просмотра всех пользователей
+bot.command('list_users', (ctx) => {
+  if (!isAdmin(ctx.from.id)) {
+    return ctx.reply('❌ У вас нет прав для выполнения этой команды.');
+  }
+
+  const users = db.prepare('SELECT id, username, stars FROM users').all();
+  const userList = users
+    .map(user => `ID: ${user.id}, Имя: ${user.username || 'Аноним'}, Звёзд: ${user.stars}`)
+    .join('\n');
+
+  ctx.reply(`👥 Список пользователей:\n\n${userList}`);
+});
+
+// Инициализация бота
 bot.start((ctx) => {
   const args = ctx.message.text.split(' ');
   const referrerId = args.length > 1 && args[1].startsWith('referral_') 
@@ -49,71 +123,6 @@ bot.start((ctx) => {
   }
 
   ctx.reply(`👋 Привет, ${ctx.from.first_name}! Добро пожаловать в бот 🌟`, mainMenu());
-});
-
-bot.hears('⭐ Фарм звёзд', (ctx) => {
-  const user = getUser(ctx.from.id, ctx.from.username);
-  const now = Math.floor(Date.now() / 1000);
-  const elapsed = now - user.last_farm;
-
-  if (elapsed < FARM_COOLDOWN) {
-    const wait = FARM_COOLDOWN - elapsed;
-    return ctx.reply(`⏳ Подожди ${wait} сек перед следующим фармом`);
-  }
-
-  db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, user.id);
-  ctx.reply(`⭐ Вы получили 1 звезду!`);
-});
-
-bot.hears('🎁 Бонус', (ctx) => {
-  const user = getUser(ctx.from.id, ctx.from.username);
-  const now = Math.floor(Date.now() / 1000);
-  const elapsed = now - user.last_bonus;
-
-  if (elapsed < BONUS_COOLDOWN) {
-    const wait = Math.ceil((BONUS_COOLDOWN - elapsed) / 60);
-    return ctx.reply(`🎁 Бонус доступен через ${wait} мин`);
-  }
-
-  db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(now, user.id);
-  ctx.reply(`🎉 Вы получили 5 бонусных звёзд!`);
-});
-
-bot.hears('👤 Профиль', (ctx) => {
-  const user = getUser(ctx.from.id, ctx.from.username);
-  ctx.reply(`👤 Профиль:\n\n🆔 ID: ${user.id}\n💫 Звёзд: ${user.stars}`);
-});
-
-bot.hears('🏆 Лидеры', (ctx) => {
-  const leaders = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
-  const leaderboard = leaders.map((u, i) => `${i + 1}. ${u.username || 'Аноним'} - ${u.stars} ⭐`).join('\n');
-  ctx.reply(`🏆 Топ 10 игроков:\n\n${leaderboard}`);
-});
-
-bot.hears('📊 Статистика', (ctx) => {
-  const totalUsers = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-  const totalStars = db.prepare('SELECT SUM(stars) as total FROM users').get().total || 0;
-  ctx.reply(`📊 Общая статистика:\n\n👥 Пользователей: ${totalUsers}\n⭐ Всего звёзд: ${totalStars}`);
-});
-
-bot.hears('🔗 Реферальная ссылка', (ctx) => {
-  const userId = ctx.from.id;
-  const link = `https://t.me/your_bot?start=referral_${userId}`;
-  ctx.reply(`🔗 Ваша реферальная ссылка:\n${link}`);
-});
-
-bot.command('referrals', (ctx) => {
-  const userId = ctx.from.id;
-  const referrals = db.prepare('SELECT * FROM users WHERE referrer_id = ?').all(userId);
-
-  if (referrals.length > 0) {
-    const referralsList = referrals
-      .map(user => `${user.username || 'Аноним'} - ${user.stars} ⭐`)
-      .join('\n');
-    ctx.reply(`👥 Ваши приглашённые:\n\n${referralsList}`);
-  } else {
-    ctx.reply('❌ Вы ещё никого не пригласили.');
-  }
 });
 
 bot.launch();
