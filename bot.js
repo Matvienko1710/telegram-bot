@@ -8,11 +8,12 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 const FARM_COOLDOWN = 60;      // секунд
 const BONUS_COOLDOWN = 3600;   // 1 час
+const REFERRAL_BONUS = 10;     // Бонус за приглашённого
 
 function getUser(id, username) {
   let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) {
-    db.prepare('INSERT INTO users (id, username, stars, last_farm, last_bonus) VALUES (?, ?, 0, 0, 0)').run(id, username || '');
+    db.prepare('INSERT INTO users (id, username, stars, last_farm, last_bonus, referrer_id) VALUES (?, ?, 0, 0, 0, NULL)').run(id, username || '');
     user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   }
   return user;
@@ -22,12 +23,31 @@ function mainMenu() {
   return Markup.keyboard([
     ['⭐ Фарм звёзд', '🎁 Бонус'],
     ['👤 Профиль', '🏆 Лидеры'],
-    ['📊 Статистика']
+    ['📊 Статистика', '🔗 Реферальная ссылка']
   ]).resize();
 }
 
 bot.start((ctx) => {
-  getUser(ctx.from.id, ctx.from.username);
+  const args = ctx.message.text.split(' ');
+  const referrerId = args.length > 1 && args[1].startsWith('referral_') 
+    ? parseInt(args[1].split('_')[1]) 
+    : null;
+
+  let user = db.prepare('SELECT * FROM users WHERE id = ?').get(ctx.from.id);
+  if (!user) {
+    db.prepare('INSERT INTO users (id, username, stars, last_farm, last_bonus, referrer_id) VALUES (?, ?, 0, 0, 0, ?)').run(
+      ctx.from.id,
+      ctx.from.username || '',
+      referrerId
+    );
+
+    // Начисляем бонус за реферала
+    if (referrerId) {
+      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(REFERRAL_BONUS, referrerId);
+      ctx.telegram.sendMessage(referrerId, `🎉 Вы получили ${REFERRAL_BONUS} звёзд за приглашение нового пользователя!`);
+    }
+  }
+
   ctx.reply(`👋 Привет, ${ctx.from.first_name}! Добро пожаловать в бот 🌟`, mainMenu());
 });
 
@@ -76,18 +96,23 @@ bot.hears('📊 Статистика', (ctx) => {
   ctx.reply(`📊 Общая статистика:\n\n👥 Пользователей: ${totalUsers}\n⭐ Всего звёзд: ${totalStars}`);
 });
 
-bot.command('users', (ctx) => {
-  try {
-    const users = db.prepare('SELECT * FROM users').all();
-    if (users.length > 0) {
-      const userList = users.map(user => `ID: ${user.id}, Username: ${user.username || 'Unknown'}, Stars: ${user.stars}`).join('\n');
-      ctx.reply(`Список пользователей:\n${userList}`);
-    } else {
-      ctx.reply('В базе данных нет пользователей.');
-    }
-  } catch (error) {
-    console.error('Ошибка при получении пользователей:', error);
-    ctx.reply('Произошла ошибка при работе с базой данных.');
+bot.hears('🔗 Реферальная ссылка', (ctx) => {
+  const userId = ctx.from.id;
+  const link = `https://t.me/your_bot?start=referral_${userId}`;
+  ctx.reply(`🔗 Ваша реферальная ссылка:\n${link}`);
+});
+
+bot.command('referrals', (ctx) => {
+  const userId = ctx.from.id;
+  const referrals = db.prepare('SELECT * FROM users WHERE referrer_id = ?').all(userId);
+
+  if (referrals.length > 0) {
+    const referralsList = referrals
+      .map(user => `${user.username || 'Аноним'} - ${user.stars} ⭐`)
+      .join('\n');
+    ctx.reply(`👥 Ваши приглашённые:\n\n${referralsList}`);
+  } else {
+    ctx.reply('❌ Вы ещё никого не пригласили.');
   }
 });
 
