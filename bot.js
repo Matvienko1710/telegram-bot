@@ -13,6 +13,18 @@ const REFERRAL_BONUS = 10;     // Бонус за приглашённого
 // Администраторы
 const ADMINS = new Set(); // Хранение ID администраторов
 
+// Проверка и добавление недостающей колонки referrer_id
+try {
+  db.prepare("ALTER TABLE users ADD COLUMN referrer_id INTEGER").run();
+  console.log("Колонка referrer_id успешно добавлена в таблицу users.");
+} catch (error) {
+  if (error.message.includes("duplicate column name")) {
+    console.log("Колонка referrer_id уже существует в таблице users.");
+  } else {
+    console.error("Ошибка при добавлении колонки referrer_id:", error.message);
+  }
+}
+
 // Инициализация пользователя
 function getUser(id, username) {
   let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
