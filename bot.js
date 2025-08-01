@@ -7,15 +7,13 @@ const db = require('./db');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Главное меню
-function getMainMenu() {
-  return Markup.inlineKeyboard([
-    [Markup.button.callback('⭐ Фарм', 'farm')],
-    [Markup.button.callback('🎁 Бонус', 'bonus')],
-    [Markup.button.callback('👤 Профиль', 'profile')],
-    [Markup.button.callback('🏆 Лидеры', 'leaders')],
+function sendMainMenu(ctx) {
+  return ctx.reply('🚀 Главное меню', Markup.inlineKeyboard([
+    [Markup.button.callback('⭐ Фарм', 'farm'), Markup.button.callback('🎁 Бонус', 'bonus')],
+    [Markup.button.callback('👤 Профиль', 'profile'), Markup.button.callback('🏆 Лидеры', 'leaders')],
     [Markup.button.callback('📊 Статистика', 'stats')],
-    [Markup.button.callback('📩 Пригласить друзей', 'referral')],
-  ]);
+    [Markup.button.callback('📩 Пригласить друзей', 'ref')]
+  ]));
 }
 
 // Регистрация пользователя
@@ -27,79 +25,99 @@ function registerUser(ctx) {
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!existing) {
     db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
+
     if (referral && referral !== id) {
       db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(referral);
+      ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +10 звёзд`);
     }
   }
 }
 
-bot.start((ctx) => {
+// /start
+bot.start(async (ctx) => {
   registerUser(ctx);
-  ctx.reply('🚀 Добро пожаловать! Вот меню:', getMainMenu());
+  await sendMainMenu(ctx);
 });
 
-bot.action('farm', async (ctx) => {
+// Callback кнопки
+bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   const now = Date.now();
-  const cooldown = 60 * 1000;
+  const action = ctx.callbackQuery.data;
 
-  if (now - user.last_farm < cooldown) {
-    const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
-    const msg = await ctx.reply(`⏳ Подождите ${seconds} сек.`);
-    setTimeout(() => ctx.deleteMessage(msg.message_id), 5000);
-    return;
-  }
-
-  db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, id);
-  const msg = await ctx.reply('⭐ Вы заработали 1 звезду!');
-  setTimeout(() => ctx.deleteMessage(msg.message_id), 5000);
-});
-
-bot.action('bonus', async (ctx) => {
-  const id = ctx.from.id;
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  const now = dayjs();
-  const last = user.last_bonus ? dayjs(user.last_bonus) : null;
+  if (!user) return ctx.answerCbQuery('Пользователь не найден');
 
-  if (last && now.diff(last, 'hour') < 24) {
-    const hoursLeft = 24 - now.diff(last, 'hour');
-    const msg = await ctx.reply(`🎁 Бонус можно получить через ${hoursLeft} ч.`);
-    setTimeout(() => ctx.deleteMessage(msg.message_id), 5000);
-    return;
+  if (action === 'farm') {
+    const cooldown = 60 * 1000;
+    if (now - user.last_farm < cooldown) {
+      const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
+      return ctx.answerCbQuery(`⏳ Подождите ${seconds} сек.`, { show_alert: true });
+    }
+
+    db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, id);
+    return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
   }
 
-  db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(now.toISOString(), id);
-  const msg = await ctx.reply('🎉 Вы получили ежедневный бонус: +5 звёзд!');
-  setTimeout(() => ctx.deleteMessage(msg.message_id), 5000);
-});
+  if (action === 'bonus') {
+    const nowDay = dayjs();
+    const last = user.last_bonus ? dayjs(user.last_bonus) : null;
 
-bot.action('profile', async (ctx) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ctx.from.id);
-  await ctx.reply(`👤 Профиль:
+    if (last && nowDay.diff(last, 'hour') < 24) {
+      const hoursLeft = 24 - nowDay.diff(last, 'hour');
+      return ctx.answerCbQuery(`🎁 Бонус можно получить через ${hoursLeft} ч.`, { show_alert: true });
+    }
+
+    db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), id);
+    return ctx.answerCbQuery('🎉 Вы получили ежедневный бонус: +5 звёзд!', { show_alert: true });
+  }
+
+  if (action === 'profile') {
+    const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(id).count;
+    return ctx.editMessageText(`👤 Профиль:
 🆔 ID: ${user.id}
 💫 Звёзды: ${user.stars}
-📣 Реф: ${user.referred_by || '—'}`);
+👥 Приглашено: ${invited}
+📣 Реф: ${user.referred_by || '—'}`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
+
+  if (action === 'leaders') {
+    const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
+    const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
+    return ctx.editMessageText(`🏆 Топ 10:\n\n${list}`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
+
+  if (action === 'stats') {
+    const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+    const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
+    return ctx.editMessageText(`📊 Статистика:
+👥 Пользователей: ${total}
+⭐ Всего звёзд: ${totalStars}`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
+
+  if (action === 'ref') {
+    const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
+    return ctx.editMessageText(`📩 Твоя реферальная ссылка:\n\n${link}`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
+
+  if (action === 'back') {
+    return ctx.editMessageText('🚀 Главное меню', Markup.inlineKeyboard([
+      [Markup.button.callback('⭐ Фарм', 'farm'), Markup.button.callback('🎁 Бонус', 'bonus')],
+      [Markup.button.callback('👤 Профиль', 'profile'), Markup.button.callback('🏆 Лидеры', 'leaders')],
+      [Markup.button.callback('📊 Статистика', 'stats')],
+      [Markup.button.callback('📩 Пригласить друзей', 'ref')]
+    ]));
+  }
 });
 
-bot.action('leaders', async (ctx) => {
-  const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
-  const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
-  await ctx.reply(`🏆 Топ 10:\n\n${list}`);
-});
-
-bot.action('stats', async (ctx) => {
-  const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-  const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
-  await ctx.reply(`📊 Статистика:\n👥 Пользователей: ${total}\n⭐ Всего звёзд: ${totalStars}`);
-});
-
-bot.action('referral', async (ctx) => {
-  const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
-  await ctx.reply(`📩 Пригласи друзей и получи +10 звёзд за каждого!\n\n🔗 Ваша ссылка:\n${link}`);
-});
-
-// Запуск
 bot.launch().then(() => {
-  console.log('🤖 Бот успешно запущен!');
+  console.log('🤖 Бот запущен с инлайн-кнопками!');
 });
