@@ -52,6 +52,7 @@ bot.start(async (ctx) => {
     }
   }
 
+// Красивое приветствие 
   await ctx.replyWithPhoto(
   { url: 'https://i.imgur.com/2nCt3Sbl.jpg' }, // можешь заменить на свою картинку
   {
