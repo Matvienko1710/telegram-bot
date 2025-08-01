@@ -12,4 +12,12 @@ db.prepare(`
   )
 `).run();
 
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS promo_codes (
+    code TEXT PRIMARY KEY,
+    reward INTEGER NOT NULL,
+    used_by INTEGER DEFAULT NULL
+  )
+`).run();
+
 module.exports = db;
