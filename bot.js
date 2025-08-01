@@ -62,7 +62,7 @@ bot.start(async (ctx) => {
       `Желаем удачи и удачного фарма! 💫`,
     parse_mode: 'Markdown'
   }
-);
+});
 
 // Callback
 bot.on('callback_query', async (ctx) => {
