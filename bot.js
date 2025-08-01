@@ -6,7 +6,7 @@ require('dotenv').config();
 const bot = new Telegraf(process.env.BOT_TOKEN);
 const db = new Database('users.db');
 
-// Создание таблицы
+// Создание таблицы, если нет
 db.prepare(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
@@ -18,7 +18,7 @@ db.prepare(`
   )
 `).run();
 
-// Регистрация
+// Регистрация пользователя
 function registerUser(ctx) {
   const id = ctx.from.id;
   const username = ctx.from.username || '';
@@ -34,84 +34,86 @@ function registerUser(ctx) {
   }
 }
 
-// Инлайн-кнопки
-const mainMenu = Markup.inlineKeyboard([
-  [Markup.button.callback('⭐ Фарм', 'farm')],
-  [Markup.button.callback('🎁 Бонус', 'bonus')],
-  [Markup.button.callback('👤 Профиль', 'profile')],
-  [Markup.button.callback('🏆 Лидеры', 'leaders')],
-  [Markup.button.callback('📊 Статистика', 'stats')],
-]);
+// Главное меню
+function sendMainMenu(ctx) {
+  ctx.reply('🚀 Главное меню', Markup.keyboard([
+    ['⭐ Фарм', '🎁 Бонус'],
+    ['👤 Профиль', '🏆 Лидеры'],
+    ['📊 Статистика', '📩 Пригласить друзей']
+  ]).resize());
+}
 
-// Старт
-bot.start((ctx) => {
-  registerUser(ctx);
-
-  ctx.reply(
-    '🚀 Добро пожаловать! Зарабатывай звёзды!',
-    mainMenu
-  );
-});
-
-// 👆 Обработка кнопок
-bot.action('farm', (ctx) => {
+// Обработка кнопок
+bot.on('text', async (ctx) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ctx.from.id);
   const now = Date.now();
 
-  if (!user) return ctx.answerCbQuery('Сначала нажмите /start');
-
-  const cooldown = 60 * 1000;
-  if (now - user.last_farm < cooldown) {
-    const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
-    return ctx.answerCbQuery(`⏳ Подождите ${seconds} сек.`);
+  if (!user) {
+    ctx.reply('Сначала нажмите /start');
+    return;
   }
 
-  db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, ctx.from.id);
-  ctx.answerCbQuery('⭐ +1 звезда!');
-});
+  const text = ctx.message.text;
 
-bot.action('bonus', (ctx) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ctx.from.id);
-  const now = dayjs();
-  const last = user.last_bonus ? dayjs(user.last_bonus) : null;
+  if (text === '⭐ Фарм') {
+    const cooldown = 60 * 1000;
+    if (now - user.last_farm < cooldown) {
+      const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
+      return ctx.answerCbQuery?.(`⏳ Подождите ${seconds} сек.`) || ctx.reply(`⏳ Подождите ${seconds} сек.`);
+    }
 
-  if (last && now.diff(last, 'hour') < 24) {
-    const hoursLeft = 24 - now.diff(last, 'hour');
-    return ctx.answerCbQuery(`⏳ Через ${hoursLeft} ч.`);
+    db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, user.id);
+    return ctx.reply('⭐ Вы заработали 1 звезду!');
   }
 
-  db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(now.toISOString(), ctx.from.id);
-  ctx.answerCbQuery('🎉 +5 звёзд (бонус)!');
-});
+  if (text === '🎁 Бонус') {
+    const nowDay = dayjs();
+    const last = user.last_bonus ? dayjs(user.last_bonus) : null;
 
-bot.action('profile', (ctx) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ctx.from.id);
-  if (!user) return ctx.answerCbQuery('Нажмите /start');
+    if (last && nowDay.diff(last, 'hour') < 24) {
+      const hoursLeft = 24 - nowDay.diff(last, 'hour');
+      return ctx.reply(`🎁 Бонус можно получить через ${hoursLeft} ч.`);
+    }
 
-  ctx.reply(`👤 Профиль:
+    db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), user.id);
+    return ctx.reply('🎉 Вы получили ежедневный бонус: +5 звёзд!');
+  }
+
+  if (text === '👤 Профиль') {
+    return ctx.reply(`👤 Профиль:
 🆔 ID: ${user.id}
 💫 Звёзды: ${user.stars}
-📣 Реф: ${user.referred_by || '—'}
-`, mainMenu);
-  ctx.answerCbQuery();
+📣 Реф: ${user.referred_by || '—'}`);
+  }
+
+  if (text === '🏆 Лидеры') {
+    const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
+    const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
+    return ctx.reply(`🏆 Топ 10:\n\n${list}`);
+  }
+
+  if (text === '📊 Статистика') {
+    const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+    const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
+    return ctx.reply(`📊 Статистика:\n👥 Пользователей: ${total}\n⭐ Всего звёзд: ${totalStars}`);
+  }
+
+  if (text === '📩 Пригласить друзей') {
+    const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
+    return ctx.reply(`🔗 Твоя реф. ссылка:\n${link}`, Markup.keyboard([
+      ['🔙 Назад']
+    ]).resize());
+  }
+
+  if (text === '🔙 Назад') {
+    return sendMainMenu(ctx);
+  }
 });
 
-bot.action('leaders', (ctx) => {
-  const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
-  const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
-
-  ctx.reply(`🏆 Топ 10 лидеров:\n\n${list}`, mainMenu);
-  ctx.answerCbQuery();
-});
-
-bot.action('stats', (ctx) => {
-  const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-  const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
-
-  ctx.reply(`📊 Статистика:
-👥 Пользователей: ${total}
-⭐ Всего звёзд: ${totalStars}`, mainMenu);
-  ctx.answerCbQuery();
+// /start
+bot.start((ctx) => {
+  registerUser(ctx);
+  sendMainMenu(ctx);
 });
 
 bot.launch();
