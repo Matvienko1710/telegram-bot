@@ -4,7 +4,15 @@ require('dotenv').config();
 
 const db = require('./db');
 const bot = new Telegraf(process.env.BOT_TOKEN);
+
+// Подключаем сессии
 bot.use(session());
+
+// Гарантируем, что ctx.session всегда объект
+bot.use(async (ctx, next) => {
+  if (!ctx.session) ctx.session = {};
+  await next();
+});
 
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
@@ -63,9 +71,6 @@ bot.start(async (ctx) => {
 });
 
 bot.on('callback_query', async (ctx) => {
-  // Добавляем проверку и инициализацию сессии, если её нет
-  if (!ctx.session) ctx.session = {};
-
   const id = ctx.from.id;
   const now = Date.now();
   const action = ctx.callbackQuery.data;
