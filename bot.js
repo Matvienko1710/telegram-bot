@@ -1,22 +1,10 @@
 const { Telegraf, Markup } = require('telegraf');
-const Database = require('better-sqlite3');
 const dayjs = require('dayjs');
 require('dotenv').config();
 
-const bot = new Telegraf(process.env.BOT_TOKEN);
-const db = new Database('/data/users.db');
+const db = require('./db');
 
-// Создание таблицы, если нет
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
-    username TEXT,
-    stars INTEGER DEFAULT 0,
-    referred_by INTEGER,
-    last_farm INTEGER DEFAULT 0,
-    last_bonus TEXT
-  )
-`).run();
+const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Регистрация пользователя
 function registerUser(ctx) {
@@ -43,23 +31,27 @@ function sendMainMenu(ctx) {
   ]).resize());
 }
 
-// Обработка кнопок
+// Обработка текстовых сообщений
 bot.on('text', async (ctx) => {
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ctx.from.id);
-  const now = Date.now();
+  const id = ctx.from.id;
+  let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 
+  // Если пользователя нет — регистрируем и показываем меню
   if (!user) {
-    ctx.reply('Сначала нажмите /start');
+    registerUser(ctx);
+    user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    sendMainMenu(ctx);
     return;
   }
 
+  const now = Date.now();
   const text = ctx.message.text;
 
   if (text === '⭐ Фарм') {
     const cooldown = 60 * 1000;
     if (now - user.last_farm < cooldown) {
       const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
-      return ctx.answerCbQuery?.(`⏳ Подождите ${seconds} сек.`) || ctx.reply(`⏳ Подождите ${seconds} сек.`);
+      return ctx.reply(`⏳ Подождите ${seconds} сек.`);
     }
 
     db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, user.id);
@@ -110,10 +102,13 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// /start
+// Обработка команды /start
 bot.start((ctx) => {
   registerUser(ctx);
   sendMainMenu(ctx);
 });
 
-bot.launch();
+// Запуск бота
+bot.launch().then(() => {
+  console.log('🤖 Бот успешно запущен!');
+});
