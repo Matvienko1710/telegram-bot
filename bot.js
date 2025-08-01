@@ -1,72 +1,99 @@
-const { Telegraf, Markup } = require('telegraf');
-const dayjs = require('dayjs');
-require('dotenv').config();
-
-const db = require('./db');
+const { Telegraf, Markup, session } = require('telegraf');
+const Database = require('better-sqlite3');
+const db = new Database('users.db');
 const bot = new Telegraf(process.env.BOT_TOKEN);
+bot.use(session());
 
-const REQUIRED_CHANNEL = '@magnumtap';
-const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
+const ADMIN_ID = 6587897295; // Замени на свой ID
+const CHANNEL_ID = '@magnumtap'; // Замени на свой канал
+
+// Таблицы
+db.prepare(`CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  username TEXT,
+  stars INTEGER DEFAULT 0,
+  referrer INTEGER,
+  last_farm INTEGER DEFAULT 0
+)`).run();
+
+db.prepare(`CREATE TABLE IF NOT EXISTS promocodes (
+  code TEXT PRIMARY KEY,
+  stars INTEGER,
+  uses INTEGER DEFAULT 0,
+  max_uses INTEGER
+)`).run();
+
+db.prepare(`CREATE TABLE IF NOT EXISTS used_promocodes (
+  user_id INTEGER,
+  code TEXT,
+  PRIMARY KEY (user_id, code)
+)`).run();
+
+function registerUser(ctx) {
+  const id = ctx.from.id;
+  const username = ctx.from.username || null;
+  const ref = ctx.session.ref;
+
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!user) {
+    db.prepare('INSERT INTO users (id, username, referrer) VALUES (?, ?, ?)').run(id, username, ref || null);
+    if (ref) {
+      db.prepare('UPDATE users SET stars = stars + 1 WHERE id = ?').run(ref);
+      bot.telegram.sendMessage(ref, `🎉 Новый реферал: @${ctx.from.username || 'пользователь'}! +1⭐`);
+    }
+  }
+}
 
 async function isUserSubscribed(ctx) {
   try {
-    const status = await ctx.telegram.getChatMember(REQUIRED_CHANNEL, ctx.from.id);
-    return ['member', 'creator', 'administrator'].includes(status.status);
+    const member = await ctx.telegram.getChatMember(CHANNEL_ID, ctx.from.id);
+    return ['creator', 'administrator', 'member'].includes(member.status);
   } catch {
     return false;
   }
 }
 
 function sendMainMenu(ctx) {
-  return ctx.reply('🚀 Главное меню', Markup.inlineKeyboard([
-    [Markup.button.callback('⭐ Фарм', 'farm'), Markup.button.callback('🎁 Бонус', 'bonus')],
-    [Markup.button.callback('👤 Профиль', 'profile'), Markup.button.callback('🏆 Лидеры', 'leaders')],
+  return ctx.reply('🌌 Добро пожаловать в MagnumTap!', Markup.inlineKeyboard([
+    [Markup.button.callback('⛏ Фарм', 'farm')],
+    [Markup.button.callback('🎁 Бонус', 'bonus')],
+    [Markup.button.callback('🏆 Топ', 'top'), Markup.button.callback('👤 Профиль', 'profile')],
     [Markup.button.callback('📊 Статистика', 'stats')],
-    [Markup.button.callback('📩 Пригласить друзей', 'ref')],
-    ctx.from.id === ADMIN_ID ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
+    [Markup.button.callback('🎁 Промокод', 'promo')]
   ]));
 }
 
 bot.start(async (ctx) => {
   const id = ctx.from.id;
-  const username = ctx.from.username || '';
-  const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
+  const ref = ctx.startPayload;
+  if (ref && !isNaN(ref)) ctx.session.ref = Number(ref);
 
   const subscribed = await isUserSubscribed(ctx);
   if (!subscribed) {
-    return ctx.reply(`🔒 Чтобы использовать бота, подпишись на канал: ${REQUIRED_CHANNEL}`, Markup.inlineKeyboard([
-      [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
+    return ctx.reply('🔒 Подпишись на канал и нажми "✅ Я подписался"', Markup.inlineKeyboard([
+      [Markup.button.url('📢 Перейти в канал', `https://t.me/${CHANNEL_ID.replace('@', '')}`)],
       [Markup.button.callback('✅ Я подписался', 'check_sub')]
     ]));
   }
 
-  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (!existing) {
-    db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
-    if (referral && referral !== id) {
-      db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(referral);
-      ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +10 звёзд`);
-    }
-  }
+  registerUser(ctx);
+  return sendMainMenu(ctx);
+});
 
-  await ctx.reply(
-    `👋 Привет, *${ctx.from.first_name || 'друг'}*!\n\n` +
-    `Добро пожаловать в *MagnumTap* — место, где ты фармишь звёзды, получаешь бонусы и соревнуешься с другими! 🌟\n\n` +
-    `🎯 Приглашай друзей, зарабатывай награды и поднимайся в топ!\n\n` +
-    `Желаем удачи и удачного фарма! 💫`,
-    { parse_mode: 'Markdown' }
-  );
-
-  await sendMainMenu(ctx);
+bot.command('admin', async (ctx) => {
+  if (ctx.from.id !== ADMIN_ID) return;
+  await ctx.reply('👮 Админ-панель', Markup.inlineKeyboard([
+    [Markup.button.callback('📊 Статистика', 'admin_stats')],
+    [Markup.button.callback('📤 Рассылка', 'admin_broadcast')],
+    [Markup.button.callback('🏆 Топ-10', 'admin_top')],
+    [Markup.button.callback('👥 Пользователи', 'admin_users')],
+    [Markup.button.callback('➕ Создать промокод', 'admin_create_promo')]
+  ]));
 });
 
 bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
-  const now = Date.now();
   const action = ctx.callbackQuery.data;
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-
-  if (!user && action !== 'check_sub') return ctx.answerCbQuery('Пользователь не найден');
 
   if (action === 'check_sub') {
     const subscribed = await isUserSubscribed(ctx);
@@ -77,132 +104,147 @@ bot.on('callback_query', async (ctx) => {
     return sendMainMenu(ctx);
   }
 
-  if (action === 'farm') {
-    const cooldown = 60 * 1000;
-    if (now - user.last_farm < cooldown) {
-      const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
-      return ctx.answerCbQuery(`⏳ Подождите ${seconds} сек.`, { show_alert: true });
-    }
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!user) {
+    return ctx.answerCbQuery('🔒 Подпишись и нажми "✅ Я подписался"', { show_alert: true });
+  }
 
+  const subscribed = await isUserSubscribed(ctx);
+  if (!subscribed) {
+    return ctx.answerCbQuery('🔒 Без подписки бот недоступен', { show_alert: true });
+  }
+
+  // --- Основной функционал ---
+  if (action === 'farm') {
+    const now = Math.floor(Date.now() / 1000);
+    if (now - user.last_farm < 60) {
+      return ctx.answerCbQuery('⏳ Фарм доступен раз в 60 секунд!', { show_alert: true });
+    }
     db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, id);
-    return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
+    return ctx.answerCbQuery('⭐ +1 звезда!', { show_alert: true });
   }
 
   if (action === 'bonus') {
-    const nowDay = dayjs();
-    const last = user.last_bonus ? dayjs(user.last_bonus) : null;
-
-    if (last && nowDay.diff(last, 'hour') < 24) {
-      const hoursLeft = 24 - nowDay.diff(last, 'hour');
-      return ctx.answerCbQuery(`🎁 Бонус можно получить через ${hoursLeft} ч.`, { show_alert: true });
-    }
-
-    db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), id);
-    return ctx.answerCbQuery('🎉 Вы получили ежедневный бонус: +5 звёзд!', { show_alert: true });
-  }
-
-  if (['profile', 'leaders', 'stats', 'ref'].includes(action)) {
-    await ctx.deleteMessage(); // Удаляем сообщение перед отправкой нового
+    db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(id);
+    return ctx.answerCbQuery('🎁 +5 бонусных звёзд!', { show_alert: true });
   }
 
   if (action === 'profile') {
-    const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(id).count;
-    return ctx.reply(`👤 Профиль:
-🆔 ID: ${user.id}
-💫 Звёзды: ${user.stars}
-👥 Приглашено: ${invited}
-📣 Реф: ${user.referred_by || '—'}`, Markup.inlineKeyboard([
+    const refCount = db.prepare('SELECT COUNT(*) as count FROM users WHERE referrer = ?').get(id).count;
+    const text = `👤 Профиль\n\n⭐ Звёзды: ${user.stars}\n👥 Рефералов: ${refCount}\n🔗 Реф. ссылка: t.me/${ctx.me}?start=${id}`;
+    const msg = await ctx.reply(text, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
+    ctx.session?.lastMessageId && ctx.deleteMessage(ctx.session.lastMessageId).catch(() => {});
+    ctx.session.lastMessageId = msg.message_id;
+    return;
   }
 
-  if (action === 'leaders') {
+  if (action === 'top') {
     const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
     const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
-    return ctx.reply(`🏆 Топ 10:\n\n${list}`, Markup.inlineKeyboard([
+    const msg = await ctx.reply(`🏆 Топ 10:\n\n${list}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
+    ctx.session?.lastMessageId && ctx.deleteMessage(ctx.session.lastMessageId).catch(() => {});
+    ctx.session.lastMessageId = msg.message_id;
+    return;
   }
 
   if (action === 'stats') {
     const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-    const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
-    return ctx.reply(`📊 Статистика:
-👥 Пользователей: ${total}
-⭐ Всего звёзд: ${totalStars}`, Markup.inlineKeyboard([
+    const totalStars = db.prepare('SELECT SUM(stars) as sum FROM users').get().sum || 0;
+    const msg = await ctx.reply(`📊 Статистика:\n👥 Пользователей: ${total}\n⭐ Всего звёзд: ${totalStars}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
+    ctx.session?.lastMessageId && ctx.deleteMessage(ctx.session.lastMessageId).catch(() => {});
+    ctx.session.lastMessageId = msg.message_id;
+    return;
   }
 
-  if (action === 'ref') {
-    const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
-    return ctx.reply(`📩 Твоя реферальная ссылка:\n\n${link}`, Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
-  }
-
-  if (action === 'admin') {
-    if (id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
-    return ctx.editMessageText(`⚙️ Админ-панель`, Markup.inlineKeyboard([
-      [Markup.button.callback('📊 Статистика', 'admin_stats')],
-      [Markup.button.callback('🏆 Топ', 'admin_top')],
-      [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
-  }
-
-  if (action === 'admin_stats') {
-    const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-    const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
-    return ctx.answerCbQuery(`👥 Юзеров: ${total}, ⭐ Звёзд: ${totalStars}`, { show_alert: true });
-  }
-
-  if (action === 'admin_top') {
-    const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
-    const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
-    return ctx.reply(`🏆 Топ 10:\n\n${list}`);
-  }
-
-  if (action === 'admin_broadcast') {
-    ctx.session = ctx.session || {};
-    ctx.session.broadcast = true;
-    return ctx.reply('✏️ Введите текст рассылки:');
+  if (action === 'promo') {
+    ctx.session.waitingPromo = true;
+    return ctx.reply('🎁 Введите промокод:');
   }
 
   if (action === 'back') {
-    await ctx.deleteMessage();
+    ctx.session?.lastMessageId && ctx.deleteMessage(ctx.session.lastMessageId).catch(() => {});
     return sendMainMenu(ctx);
   }
+
+  // --- Админка ---
+  if (ctx.from.id === ADMIN_ID) {
+    if (action === 'admin_stats') {
+      const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+      const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
+      return ctx.answerCbQuery(`👥 Пользователей: ${total}\n⭐ Всего звёзд: ${totalStars}`, { show_alert: true });
+    }
+
+    if (action === 'admin_top') {
+      const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
+      const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
+      return ctx.reply(`🏆 Топ 10:\n\n${list}`);
+    }
+
+    if (action === 'admin_users') {
+      const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
+      return ctx.answerCbQuery(`👥 Всего пользователей: ${total}`, { show_alert: true });
+    }
+
+    if (action === 'admin_broadcast') {
+      ctx.session.waitingForBroadcast = true;
+      return ctx.reply('✍️ Введите текст рассылки:');
+    }
+
+    if (action === 'admin_create_promo') {
+      ctx.session.waitingForPromo = true;
+      return ctx.reply('✍️ Введите промокод в формате:\n\n`КОД КОЛ-ВО_ЗВЕЗД МАКС_ИСПОЛЬЗОВАНИЙ`\n\nПример: `MAGIC50 50 100`', { parse_mode: 'Markdown' });
+    }
+  }
 });
 
-// Обработка рассылки
 bot.on('message', async (ctx) => {
-  if (ctx.session?.broadcast && ctx.from.id === ADMIN_ID) {
+  const id = ctx.from.id;
+
+  if (ctx.session?.waitingForBroadcast && ctx.from.id === ADMIN_ID) {
+    ctx.session.waitingForBroadcast = false;
     const users = db.prepare('SELECT id FROM users').all();
-    for (const u of users) {
+    let sent = 0;
+    for (const user of users) {
       try {
-        await bot.telegram.sendMessage(u.id, ctx.message.text);
-      } catch (e) {}
+        await bot.telegram.sendMessage(user.id, ctx.message.text);
+        sent++;
+      } catch {}
     }
-    ctx.session.broadcast = false;
-    return ctx.reply('✅ Рассылка завершена.');
+    return ctx.reply(`✅ Рассылка отправлена: ${sent}/${users.length}`);
+  }
+
+  if (ctx.session?.waitingForPromo && ctx.from.id === ADMIN_ID) {
+    ctx.session.waitingForPromo = false;
+    const [code, stars, max_uses] = ctx.message.text.trim().split(/\s+/);
+    if (!code || isNaN(stars) || isNaN(max_uses)) {
+      return ctx.reply('❌ Неверный формат');
+    }
+    db.prepare('INSERT OR REPLACE INTO promocodes (code, stars, max_uses) VALUES (?, ?, ?)').run(code, Number(stars), Number(max_uses));
+    return ctx.reply(`✅ Промокод ${code} создан: ${stars}⭐, максимум использований: ${max_uses}`);
+  }
+
+  if (ctx.session?.waitingPromo) {
+    ctx.session.waitingPromo = false;
+    const code = ctx.message.text.trim();
+
+    const promo = db.prepare('SELECT * FROM promocodes WHERE code = ?').get(code);
+    if (!promo) return ctx.reply('❌ Промокод не найден');
+    const used = db.prepare('SELECT * FROM used_promocodes WHERE user_id = ? AND code = ?').get(id, code);
+    if (used) return ctx.reply('⚠️ Вы уже использовали этот промокод');
+    if (promo.uses >= promo.max_uses) return ctx.reply('⚠️ Промокод уже израсходован');
+
+    db.prepare('UPDATE promocodes SET uses = uses + 1 WHERE code = ?').run(code);
+    db.prepare('INSERT INTO used_promocodes (user_id, code) VALUES (?, ?)').run(id, code);
+    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.stars, id);
+
+    return ctx.reply(`🎉 Промокод активирован! +${promo.stars}⭐`);
   }
 });
 
-function registerUser(ctx) {
-  const id = ctx.from.id;
-  const username = ctx.from.username || '';
-  const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
-
-  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (!existing) {
-    db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
-
-    if (referral && referral !== id) {
-      db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(referral);
-      ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +10 звёзд`);
-    }
-  }
-}
-
-bot.launch().then(() => console.log('🤖 Бот запущен!'));
+bot.launch();
