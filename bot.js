@@ -5,10 +5,9 @@ require('dotenv').config();
 const db = require('./db');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Подключаем сессии
 bot.use(session());
 
-// Гарантируем, что ctx.session всегда объект
+// Гарантируем, что ctx.session всегда существует
 bot.use(async (ctx, next) => {
   if (!ctx.session) ctx.session = {};
   await next();
@@ -185,6 +184,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin_addcode') {
+    // Гарантируем, что ctx.session существует (но это уже сделано в middleware)
     ctx.session.waitingForPromo = true;
     return ctx.reply('✏️ Введите промокод и количество звёзд через пробел:\nНапример: `CODE123 10`', { parse_mode: 'Markdown' });
   }
