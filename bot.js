@@ -1,273 +1,231 @@
 const { Telegraf, Markup, session } = require('telegraf');
 const Database = require('better-sqlite3');
-const db = new Database('users.db');
-require('dotenv').config();
+const axios = require('axios');
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-bot.use(session());
+bot.use(session()); // обязательно
 
-const ADMIN_ID = 6587897295; // <-- ЗАМЕНИ НА СВОЙ TELEGRAM ID
-const REQUIRED_CHANNEL = '@magnumtap'; // <-- ЗАМЕНИ НА @username ТВОЕГО КАНАЛА
+const db = new Database('users.db');
+const REQUIRED_CHANNEL = '@magnumtap'; // замените на свой канал
+const ADMIN_ID = 6587897295; // ваш Telegram ID
 
-// Создание таблиц
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY,
-    username TEXT,
-    stars INTEGER DEFAULT 0,
-    last_farm INTEGER DEFAULT 0,
-    last_bonus INTEGER DEFAULT 0,
-    ref_by INTEGER,
-    total_refs INTEGER DEFAULT 0
-  )
-`).run();
+// Таблицы
+db.prepare(`CREATE TABLE IF NOT EXISTS users (
+  id INTEGER PRIMARY KEY,
+  username TEXT,
+  stars INTEGER DEFAULT 0,
+  referred_by INTEGER,
+  bonus_time INTEGER DEFAULT 0
+)`).run();
 
-db.prepare(`
-  CREATE TABLE IF NOT EXISTS promocodes (
-    code TEXT PRIMARY KEY,
-    stars INTEGER
-  )
-`).run();
+db.prepare(`CREATE TABLE IF NOT EXISTS promocodes (
+  code TEXT PRIMARY KEY,
+  reward INTEGER
+)`).run();
 
 // Проверка подписки
-async function isUserSubscribed(ctx) {
+async function isSubscribed(userId) {
   try {
-    const res = await ctx.telegram.getChatMember(REQUIRED_CHANNEL, ctx.from.id);
-    return ['member', 'creator', 'administrator'].includes(res.status);
+    const res = await axios.get(`https://api.telegram.org/bot${process.env.BOT_TOKEN}/getChatMember?chat_id=${REQUIRED_CHANNEL}&user_id=${userId}`);
+    const status = res.data.result.status;
+    return ['member', 'administrator', 'creator'].includes(status);
   } catch {
     return false;
   }
 }
 
-// Регистрируем пользователя
+// Главное меню
+function getMainMenu() {
+  return Markup.inlineKeyboard([
+    [Markup.button.callback('💫 Фарм', 'farm')],
+    [Markup.button.callback('🎁 Бонус', 'bonus')],
+    [Markup.button.callback('👤 Профиль', 'profile')],
+    [Markup.button.callback('🏆 Топ', 'leaders')],
+    [Markup.button.callback('📊 Статистика', 'stats')],
+    [Markup.button.callback('📨 Ввести промокод', 'promo')],
+    [Markup.button.callback('📣 Пригласить', 'ref')]
+  ]);
+}
+
+// Зарегистрировать пользователя
 function registerUser(ctx) {
   const id = ctx.from.id;
-  const username = ctx.from.username || null;
-  const ref_by = ctx.session.ref;
+  const username = ctx.from.username || '';
+  const ref_by = ctx.session?.ref || null;
 
   const exists = db.prepare('SELECT 1 FROM users WHERE id = ?').get(id);
   if (!exists) {
-    db.prepare('INSERT INTO users (id, username, ref_by) VALUES (?, ?, ?)').run(id, username, ref_by || null);
-
-    // Увеличим счетчик у пригласившего
-    if (ref_by) {
-      db.prepare('UPDATE users SET total_refs = total_refs + 1 WHERE id = ?').run(ref_by);
-    }
+    db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, ref_by);
   }
 }
 
-// Главное меню
-function sendMainMenu(ctx) {
-  ctx.reply('🌌 Главное меню', Markup.inlineKeyboard([
-    [Markup.button.callback('⭐ Фарм', 'farm')],
-    [Markup.button.callback('🎁 Бонус', 'bonus')],
-    [Markup.button.callback('👤 Профиль', 'profile'), Markup.button.callback('🏆 Топ', 'top')],
-    [Markup.button.callback('📊 Статистика', 'stats')],
-    [Markup.button.callback('🎫 Ввести промокод', 'promo')]
-  ]));
-}
-
-// Приветствие
+// Обработчик /start
 bot.start(async (ctx) => {
-  const sub = await isUserSubscribed(ctx);
+  if (ctx.startPayload) ctx.session.ref = parseInt(ctx.startPayload);
+  registerUser(ctx);
 
-  // Сохраняем реферала
-  const ref = ctx.startPayload;
-  if (ref && !isNaN(ref)) {
-    ctx.session.ref = parseInt(ref);
-  }
-
-  if (!sub) {
-    return ctx.reply(`📢 Подпишитесь на канал ${REQUIRED_CHANNEL} и нажмите кнопку ниже`, Markup.inlineKeyboard([
-      [Markup.button.url('📲 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
+  const subscribed = await isSubscribed(ctx.from.id);
+  if (!subscribed) {
+    return ctx.reply('🔒 Для доступа подпишитесь на канал:', Markup.inlineKeyboard([
+      [Markup.button.url('📢 Перейти в канал', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
       [Markup.button.callback('✅ Я подписался', 'check_sub')]
     ]));
   }
 
-  registerUser(ctx);
-  sendMainMenu(ctx);
+  return ctx.reply('👋 Добро пожаловать в MagnumTap!', getMainMenu());
 });
 
 // Проверка подписки
+bot.action('check_sub', async (ctx) => {
+  const subscribed = await isSubscribed(ctx.from.id);
+  if (subscribed) {
+    registerUser(ctx);
+    return ctx.editMessageText('✅ Подписка подтверждена!', getMainMenu());
+  } else {
+    return ctx.answerCbQuery('❌ Подписка не найдена', { show_alert: true });
+  }
+});
+
+// Callback действия
 bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
   const action = ctx.callbackQuery.data;
 
-  if (action === 'check_sub') {
-    const subscribed = await isUserSubscribed(ctx);
-    if (!subscribed) {
-      return ctx.answerCbQuery('❌ Подписка не найдена!', { show_alert: true });
-    }
-    registerUser(ctx);
-    return sendMainMenu(ctx);
+  if (!await isSubscribed(id)) {
+    return ctx.editMessageText('🔒 Доступ запрещён. Подпишитесь на канал:', Markup.inlineKeyboard([
+      [Markup.button.url('📢 Перейти в канал', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
+      [Markup.button.callback('✅ Я подписался', 'check_sub')]
+    ]));
   }
 
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (!user) {
-    return ctx.answerCbQuery('🔒 Сначала подпишитесь на канал и нажмите "✅ Я подписался"', { show_alert: true });
-  }
-
-  const subscribed = await isUserSubscribed(ctx);
-  if (!subscribed) {
-    return ctx.answerCbQuery('🔒 Подпишитесь на канал!', { show_alert: true });
-  }
-
-  // Удалим старое сообщение
-  try { await ctx.deleteMessage(); } catch {}
 
   if (action === 'farm') {
-    const now = Date.now();
-    if (now - user.last_farm < 60000) {
-      return ctx.answerCbQuery('⏳ Фарм доступен раз в 60 сек.', { show_alert: true });
-    }
-
-    const stars = Math.floor(Math.random() * 3) + 1;
-    db.prepare('UPDATE users SET stars = stars + ?, last_farm = ? WHERE id = ?').run(stars, now, id);
-    return ctx.answerCbQuery(`⭐ Вы добыли ${stars} звезды!`, { show_alert: true });
+    db.prepare('UPDATE users SET stars = stars + 1 WHERE id = ?').run(id);
+    return ctx.answerCbQuery('💫 +1 звезда!');
   }
 
   if (action === 'bonus') {
-    const now = Date.now();
-    if (now - user.last_bonus < 86400000) {
-      return ctx.answerCbQuery('🎁 Бонус можно раз в 24ч.', { show_alert: true });
+    const now = Math.floor(Date.now() / 1000);
+    if (now - user.bonus_time < 3600) {
+      const remaining = 3600 - (now - user.bonus_time);
+      const minutes = Math.ceil(remaining / 60);
+      return ctx.answerCbQuery(`⌛ Бонус через ${minutes} мин.`, { show_alert: true });
+    } else {
+      db.prepare('UPDATE users SET stars = stars + 10, bonus_time = ? WHERE id = ?').run(now, id);
+      return ctx.answerCbQuery('🎁 +10 бонусных звёзд!');
     }
-
-    const stars = 10;
-    db.prepare('UPDATE users SET stars = stars + ?, last_bonus = ? WHERE id = ?').run(stars, now, id);
-    return ctx.answerCbQuery(`🎉 Вы получили ${stars} звёзд!`, { show_alert: true });
   }
 
   if (action === 'profile') {
-    await ctx.reply(`👤 Профиль\n\n🆔 ID: ${id}\n⭐ Звёзды: ${user.stars}\n👥 Рефералы: ${user.total_refs}`, Markup.inlineKeyboard([
+    const invited = db.prepare('SELECT COUNT(*) as c FROM users WHERE referred_by = ?').get(id).c;
+    return ctx.editMessageText(`👤 Профиль:
+🆔 ID: ${user.id}
+💫 Звёзды: ${user.stars}
+👥 Приглашено: ${invited}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
 
-  if (action === 'top') {
+  if (action === 'leaders') {
     const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
-    const list = top.map((u, i) => `${i + 1}. @${u.username || 'нет ника'} — ${u.stars}⭐`).join('\n');
-    await ctx.reply(`🏆 Топ 10:\n\n${list}`, Markup.inlineKeyboard([
+    const text = top.map((u, i) => `${i + 1}. @${u.username || 'anon'} — ${u.stars}⭐`).join('\n');
+    return ctx.editMessageText(`🏆 Топ игроков:\n\n${text}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
 
   if (action === 'stats') {
-    const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-    const stars = db.prepare('SELECT SUM(stars) as total FROM users').get().total || 0;
-    await ctx.reply(`📊 Статистика\n\n👥 Пользователи: ${total}\n⭐ Всего звёзд: ${stars}`, Markup.inlineKeyboard([
+    const total = db.prepare('SELECT COUNT(*) as c FROM users').get().c;
+    const sum = db.prepare('SELECT SUM(stars) as s FROM users').get().s || 0;
+    return ctx.editMessageText(`📊 Статистика:
+👥 Пользователей: ${total}
+⭐ Всего звёзд: ${sum}`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
+
+  if (action === 'ref') {
+    const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
+    return ctx.editMessageText(`📣 Приглашай друзей и получай звёзды!
+Твоя ссылка: ${link}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
 
   if (action === 'promo') {
-    ctx.session.waitingForPromo = true;
-    return ctx.reply('🎫 Введите промокод:');
+    ctx.session.waitingPromo = true;
+    return ctx.editMessageText('🎟 Введите промокод:');
   }
 
   if (action === 'back') {
-    return sendMainMenu(ctx);
+    try { await ctx.deleteMessage(); } catch {}
+    return ctx.reply('📍 Главное меню:', getMainMenu());
   }
 
-  // --- Админка ---
-  if (ctx.from.id === ADMIN_ID) {
-    if (action === 'admin') {
-      return ctx.reply('👮 Админ-панель', Markup.inlineKeyboard([
-        [Markup.button.callback('📊 Статистика', 'admin_stats')],
-        [Markup.button.callback('📤 Рассылка', 'admin_broadcast')],
-        [Markup.button.callback('🏆 Топ-10', 'admin_top')],
-        [Markup.button.callback('👥 Пользователи', 'admin_users')],
-        [Markup.button.callback('🎫 Добавить промокод', 'admin_add_promo')]
-      ]));
-    }
+  // Админ-панель
+  if (id === ADMIN_ID && action === 'admin') {
+    return ctx.editMessageText('🛠 Админ-панель', Markup.inlineKeyboard([
+      [Markup.button.callback('📨 Рассылка', 'broadcast')],
+      [Markup.button.callback('📋 Топ игроков', 'leaders')],
+      [Markup.button.callback('📊 Статистика', 'stats')],
+      [Markup.button.callback('➕ Добавить промокод', 'addpromo')],
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
 
-    if (action === 'admin_stats') {
-      const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-      const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
-      return ctx.answerCbQuery(`👥 Пользователей: ${total}\n⭐ Всего звёзд: ${totalStars}`, { show_alert: true });
-    }
+  if (id === ADMIN_ID && action === 'broadcast') {
+    ctx.session.waitingBroadcast = true;
+    return ctx.editMessageText('📨 Введите текст для рассылки:');
+  }
 
-    if (action === 'admin_top') {
-      const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
-      const list = top.map((u, i) => `${i + 1}. @${u.username || 'нет ника'} — ${u.stars}⭐`).join('\n');
-      return ctx.reply(`🏆 Топ 10:\n\n${list}`);
-    }
-
-    if (action === 'admin_users') {
-      const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
-      return ctx.answerCbQuery(`👥 Всего пользователей: ${total}`, { show_alert: true });
-    }
-
-    if (action === 'admin_broadcast') {
-      ctx.session.waitingForBroadcast = true;
-      return ctx.reply('✍️ Введите текст рассылки:');
-    }
-
-    if (action === 'admin_add_promo') {
-      ctx.session.waitingForPromoCreation = true;
-      return ctx.reply('🎫 Введите промокод и кол-во звёзд через пробел (пример: CODE123 50)');
-    }
+  if (id === ADMIN_ID && action === 'addpromo') {
+    ctx.session.waitingPromocode = true;
+    return ctx.editMessageText('🆕 Введите промокод и награду через пробел (например: TAP2025 25)');
   }
 });
 
-// Обработка текстовых сообщений
-bot.on('message', async (ctx) => {
+// Ввод текста
+bot.on('text', async (ctx) => {
   const id = ctx.from.id;
 
-  if (ctx.session.waitingForPromo) {
-    const input = ctx.message.text.trim();
-    const promo = db.prepare('SELECT * FROM promocodes WHERE code = ?').get(input);
-
-    if (!promo) {
-      ctx.session.waitingForPromo = false;
-      return ctx.reply('❌ Промокод не найден!');
-    }
-
-    db.prepare('DELETE FROM promocodes WHERE code = ?').run(input);
-    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.stars, id);
-
-    ctx.session.waitingForPromo = false;
-    return ctx.reply(`✅ Промокод активирован!\nВы получили ${promo.stars}⭐`);
-  }
-
-  if (ctx.session.waitingForBroadcast && ctx.from.id === ADMIN_ID) {
-    const text = ctx.message.text;
+  if (ctx.session.waitingBroadcast && id === ADMIN_ID) {
     const users = db.prepare('SELECT id FROM users').all();
-    let sent = 0;
-
-    for (const user of users) {
+    for (const u of users) {
       try {
-        await bot.telegram.sendMessage(user.id, text);
-        sent++;
+        await bot.telegram.sendMessage(u.id, ctx.message.text);
       } catch {}
     }
-
-    ctx.session.waitingForBroadcast = false;
-    return ctx.reply(`✅ Рассылка завершена. Отправлено: ${sent}/${users.length}`);
+    ctx.session.waitingBroadcast = false;
+    return ctx.reply('✅ Рассылка завершена');
   }
 
-  if (ctx.session.waitingForPromoCreation && ctx.from.id === ADMIN_ID) {
-    const parts = ctx.message.text.trim().split(' ');
-    const code = parts[0];
-    const stars = parseInt(parts[1]);
-
-    if (!code || isNaN(stars)) {
-      ctx.session.waitingForPromoCreation = false;
-      return ctx.reply('❌ Неверный формат. Пример: CODE123 50');
+  if (ctx.session.waitingPromocode && id === ADMIN_ID) {
+    const [code, reward] = ctx.message.text.trim().split(' ');
+    if (!code || isNaN(reward)) {
+      return ctx.reply('⚠ Неверный формат. Пример: `TAP2025 25`');
     }
-
-    db.prepare('INSERT OR REPLACE INTO promocodes (code, stars) VALUES (?, ?)').run(code, stars);
-    ctx.session.waitingForPromoCreation = false;
-    return ctx.reply(`✅ Промокод "${code}" добавлен на ${stars}⭐`);
+    try {
+      db.prepare('INSERT INTO promocodes (code, reward) VALUES (?, ?)').run(code, parseInt(reward));
+      ctx.reply('✅ Промокод добавлен!');
+    } catch {
+      ctx.reply('❌ Такой промокод уже существует!');
+    }
+    ctx.session.waitingPromocode = false;
+    return;
   }
-});
 
-// Команда для входа в админ-панель
-bot.command('admin', (ctx) => {
-  if (ctx.from.id !== ADMIN_ID) return;
-  ctx.reply('🔐 Вход в админ-панель...', Markup.inlineKeyboard([
-    [Markup.button.callback('Открыть панель', 'admin')]
-  ]));
+  if (ctx.session.waitingPromo) {
+    const code = ctx.message.text.trim();
+    const promo = db.prepare('SELECT * FROM promocodes WHERE code = ?').get(code);
+    if (!promo) return ctx.reply('❌ Неверный промокод');
+
+    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.reward, id);
+    db.prepare('DELETE FROM promocodes WHERE code = ?').run(code);
+    ctx.session.waitingPromo = false;
+    return ctx.reply(`🎉 Вы получили ${promo.reward} звёзд!`);
+  }
 });
 
 bot.launch();
-console.log('✅ Бот запущен');
+console.log('🤖 Бот запущен!');
