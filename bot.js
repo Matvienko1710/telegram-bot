@@ -25,8 +25,7 @@ function sendMainMenu(ctx) {
     [Markup.button.callback('📊 Статистика', 'stats')],
     [Markup.button.callback('📩 Пригласить друзей', 'ref')],
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
-    ctx.from.id === ADMIN_ID ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : [],
-    [Markup.button.callback('🎮 Мини-игра', 'minigame')]  // <-- Добавлена кнопка мини-игры
+    ctx.from.id === ADMIN_ID ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
   ]));
 }
 
@@ -197,36 +196,6 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply('✏️ Введите промокод и количество звёзд через пробел:\nНапример: `CODE123 10`', { parse_mode: 'Markdown' });
   }
 
-  // --- Новая логика мини-игры ---
-  if (action === 'minigame') {
-    // Запускаем игру - загадываем число от 1 до 3
-    const number = Math.floor(Math.random() * 3) + 1;
-    ctx.session = ctx.session || {};
-    ctx.session.miniGameNumber = number;
-
-    return ctx.reply('🎮 Угадай число от 1 до 3', Markup.inlineKeyboard([
-      [Markup.button.callback('1', 'guess_1'), Markup.button.callback('2', 'guess_2'), Markup.button.callback('3', 'guess_3')]
-    ]));
-  }
-
-  if (action.startsWith('guess_')) {
-    const guess = parseInt(action.split('_')[1]);
-    ctx.session = ctx.session || {};
-    const correct = ctx.session.miniGameNumber;
-    delete ctx.session.miniGameNumber;
-
-    if (!correct) {
-      return ctx.answerCbQuery('❗ Игра не запущена', { show_alert: true });
-    }
-
-    if (guess === correct) {
-      db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(id);
-      return ctx.answerCbQuery('🎉 Правильно! +5 звёзд', { show_alert: true });
-    } else {
-      return ctx.answerCbQuery(`❌ Неверно. Было: ${correct}`, { show_alert: true });
-    }
-  }
-
   if (action === 'back') {
     await ctx.deleteMessage();
     return sendMainMenu(ctx);
@@ -299,4 +268,4 @@ function registerUser(ctx) {
   }
 }
 
-bot.launch().then(() => console.log('🤖 Бот запущен!'));
+bot.launch().then(() => console.log('🤖 Бот запущен!')); 
