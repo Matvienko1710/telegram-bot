@@ -54,7 +54,7 @@ bot.start(async (ctx) => {
 
   // Красивое приветствие
   await ctx.replyWithPhoto(
-    { url: 'https://i.imgur.com/q9WnhvY_d.webp?maxwidth=760&fidelity=grand'
+    { url: 'https://i.imgur.com/q9WnhvY_d.webp?maxwidth=760&fidelity=grand',
     {
       caption: `👋 Привет, *${ctx.from.first_name || 'друг'}*!\n\n` +
         `Добро пожаловать в *MagnumTap* — место, где ты фармишь звёзды, получаешь бонусы и соревнуешься с другими! 🌟\n\n` +
