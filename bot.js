@@ -63,7 +63,8 @@ bot.start(async (ctx) => {
 });
 
 bot.on('callback_query', async (ctx) => {
-  ctx.session = ctx.session || {};  // Инициализация сессии для callback_query
+  // Добавляем проверку и инициализацию сессии, если её нет
+  if (!ctx.session) ctx.session = {};
 
   const id = ctx.from.id;
   const now = Date.now();
