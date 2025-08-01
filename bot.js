@@ -4,17 +4,10 @@ require('dotenv').config();
 
 const db = require('./db');
 const bot = new Telegraf(process.env.BOT_TOKEN);
-
 bot.use(session());
 
-// Гарантируем, что ctx.session всегда существует
-bot.use(async (ctx, next) => {
-  if (!ctx.session) ctx.session = {};
-  await next();
-});
-
 const REQUIRED_CHANNEL = '@magnumtap';
-const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
+const ADMIN_ID = 6587897295; // Заменить на свой ID
 
 async function isUserSubscribed(ctx) {
   try {
@@ -151,6 +144,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'enter_code') {
+    ctx.session = ctx.session || {};
     ctx.session.waitingForCode = true;
     return ctx.reply('💬 Введите промокод:');
   }
@@ -179,12 +173,13 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin_broadcast') {
+    ctx.session = ctx.session || {};
     ctx.session.broadcast = true;
     return ctx.reply('✏️ Введите текст рассылки:');
   }
 
   if (action === 'admin_addcode') {
-    // Гарантируем, что ctx.session существует (но это уже сделано в middleware)
+    ctx.session = ctx.session || {};
     ctx.session.waitingForPromo = true;
     return ctx.reply('✏️ Введите промокод и количество звёзд через пробел:\nНапример: `CODE123 10`', { parse_mode: 'Markdown' });
   }
