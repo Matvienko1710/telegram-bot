@@ -4,7 +4,7 @@ const dayjs = require('dayjs');
 require('dotenv').config();
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
-const db = new Database('users.db');
+const db = new Database('/data/users.db');
 
 // Создание таблицы, если нет
 db.prepare(`
