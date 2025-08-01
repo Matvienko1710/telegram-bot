@@ -165,3 +165,4 @@ function registerUser(ctx) {
 
 bot.launch().then(() => {
   console.log('🤖 Бот запущен!');
+});
