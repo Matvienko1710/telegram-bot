@@ -63,6 +63,8 @@ bot.start(async (ctx) => {
 });
 
 bot.on('callback_query', async (ctx) => {
+  ctx.session = ctx.session || {};  // Инициализация сессии для callback_query
+
   const id = ctx.from.id;
   const now = Date.now();
   const action = ctx.callbackQuery.data;
@@ -144,7 +146,6 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'enter_code') {
-    ctx.session = ctx.session || {};
     ctx.session.waitingForCode = true;
     return ctx.reply('💬 Введите промокод:');
   }
@@ -173,13 +174,11 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin_broadcast') {
-    ctx.session = ctx.session || {};
     ctx.session.broadcast = true;
     return ctx.reply('✏️ Введите текст рассылки:');
   }
 
   if (action === 'admin_addcode') {
-    ctx.session = ctx.session || {};
     ctx.session.waitingForPromo = true;
     return ctx.reply('✏️ Введите промокод и количество звёзд через пробел:\nНапример: `CODE123 10`', { parse_mode: 'Markdown' });
   }
@@ -193,9 +192,8 @@ bot.on('callback_query', async (ctx) => {
 // Обработка промокодов и рассылки
 bot.on('message', async (ctx) => {
   const id = ctx.from.id;
-  ctx.session = ctx.session || {};
 
-  if (ctx.session.broadcast && id === ADMIN_ID) {
+  if (ctx.session?.broadcast && id === ADMIN_ID) {
     const users = db.prepare('SELECT id FROM users').all();
     for (const u of users) {
       try {
@@ -206,7 +204,7 @@ bot.on('message', async (ctx) => {
     return ctx.reply('✅ Рассылка завершена.');
   }
 
-  if (ctx.session.waitingForCode) {
+  if (ctx.session?.waitingForCode) {
     const code = ctx.message.text.trim();
     const promo = db.prepare('SELECT * FROM promo_codes WHERE code = ?').get(code);
 
@@ -227,7 +225,7 @@ bot.on('message', async (ctx) => {
     return ctx.reply(`✅ Промокод активирован! +${promo.reward} звёзд`);
   }
 
-  if (ctx.session.waitingForPromo && id === ADMIN_ID) {
+  if (ctx.session?.waitingForPromo && id === ADMIN_ID) {
     const [code, rewardStr] = ctx.message.text.trim().split(/\s+/);
     const reward = parseInt(rewardStr);
 
