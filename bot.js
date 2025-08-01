@@ -7,7 +7,7 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
 const REQUIRED_CHANNEL = '@magnumtap';
-const ADMIN_ID = 6587897295; // Заменить на свой ID
+const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
 
 async function isUserSubscribed(ctx) {
   try {
@@ -119,9 +119,22 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'leaders') {
-    const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
-    const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
-    return ctx.reply(`🏆 Топ 10:\n\n${list}`, Markup.inlineKeyboard([
+    // Получаем топ-10 с количеством приглашённых рефералов
+    const top = db.prepare(`
+      SELECT 
+        u.username, 
+        u.stars, 
+        (SELECT COUNT(*) FROM users WHERE referred_by = u.id) AS referrals 
+      FROM users u 
+      ORDER BY u.stars DESC 
+      LIMIT 10
+    `).all();
+
+    const list = top.map((u, i) => 
+      `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐ — приглашено: ${u.referrals}`
+    ).join('\n');
+
+    return ctx.reply(`🏆 Топ 10 игроков:\n\n${list}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
