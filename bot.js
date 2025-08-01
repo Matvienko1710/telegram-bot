@@ -3,8 +3,19 @@ const dayjs = require('dayjs');
 require('dotenv').config();
 
 const db = require('./db');
-
 const bot = new Telegraf(process.env.BOT_TOKEN);
+
+const REQUIRED_CHANNEL = '@magnumtap'; // 🔁 Замени на свой канал
+
+// Проверка подписки
+async function isUserSubscribed(ctx) {
+  try {
+    const status = await ctx.telegram.getChatMember(REQUIRED_CHANNEL, ctx.from.id);
+    return ['member', 'creator', 'administrator'].includes(status.status);
+  } catch {
+    return false;
+  }
+}
 
 // Главное меню
 function sendMainMenu(ctx) {
@@ -16,37 +27,51 @@ function sendMainMenu(ctx) {
   ]));
 }
 
-// Регистрация пользователя
-function registerUser(ctx) {
+// Старт
+bot.start(async (ctx) => {
   const id = ctx.from.id;
   const username = ctx.from.username || '';
   const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
 
+  // Проверка подписки
+  const subscribed = await isUserSubscribed(ctx);
+  if (!subscribed) {
+    return ctx.reply(`🔒 Чтобы использовать бота, подпишись на канал: ${REQUIRED_CHANNEL}`, Markup.inlineKeyboard([
+      [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
+      [Markup.button.callback('✅ Я подписался', 'check_sub')]
+    ]));
+  }
+
+  // Регистрация
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!existing) {
     db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
-
     if (referral && referral !== id) {
       db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(referral);
       ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +10 звёзд`);
     }
   }
-}
 
-// /start
-bot.start(async (ctx) => {
-  registerUser(ctx);
   await sendMainMenu(ctx);
 });
 
-// Callback кнопки
+// Callback
 bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
   const now = Date.now();
   const action = ctx.callbackQuery.data;
-
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (!user) return ctx.answerCbQuery('Пользователь не найден');
+
+  if (!user && action !== 'check_sub') return ctx.answerCbQuery('Пользователь не найден');
+
+  if (action === 'check_sub') {
+    const subscribed = await isUserSubscribed(ctx);
+    if (!subscribed) {
+      return ctx.answerCbQuery('❌ Подписка не найдена!', { show_alert: true });
+    }
+    registerUser(ctx); // повторная регистрация при подписке
+    return sendMainMenu(ctx);
+  }
 
   if (action === 'farm') {
     const cooldown = 60 * 1000;
@@ -109,15 +134,26 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'back') {
-    return ctx.editMessageText('🚀 Главное меню', Markup.inlineKeyboard([
-      [Markup.button.callback('⭐ Фарм', 'farm'), Markup.button.callback('🎁 Бонус', 'bonus')],
-      [Markup.button.callback('👤 Профиль', 'profile'), Markup.button.callback('🏆 Лидеры', 'leaders')],
-      [Markup.button.callback('📊 Статистика', 'stats')],
-      [Markup.button.callback('📩 Пригласить друзей', 'ref')]
-    ]));
+    return sendMainMenu(ctx);
   }
 });
 
+function registerUser(ctx) {
+  const id = ctx.from.id;
+  const username = ctx.from.username || '';
+  const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
+
+  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!existing) {
+    db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
+
+    if (referral && referral !== id) {
+      db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(referral);
+      ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +10 звёзд`);
+    }
+  }
+}
+
 bot.launch().then(() => {
-  console.log('🤖 Бот запущен с инлайн-кнопками!');
+  console.log('🤖 Бот запущен!');
 });
