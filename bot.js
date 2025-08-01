@@ -31,12 +31,10 @@ function sendMainMenu(ctx) {
   ]).resize());
 }
 
-// Обработка текстовых сообщений
 bot.on('text', async (ctx) => {
   const id = ctx.from.id;
   let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 
-  // Если пользователя нет — регистрируем и показываем меню
   if (!user) {
     registerUser(ctx);
     user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
@@ -51,11 +49,15 @@ bot.on('text', async (ctx) => {
     const cooldown = 60 * 1000;
     if (now - user.last_farm < cooldown) {
       const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
-      return ctx.reply(`⏳ Подождите ${seconds} сек.`);
+      const sent = await ctx.reply(`⏳ Подождите ${seconds} сек.`);
+      setTimeout(() => ctx.deleteMessage(sent.message_id), 5000);
+      return;
     }
 
     db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, user.id);
-    return ctx.reply('⭐ Вы заработали 1 звезду!');
+    const sent = await ctx.reply('⭐ Вы заработали 1 звезду!');
+    setTimeout(() => ctx.deleteMessage(sent.message_id), 5000);
+    return;
   }
 
   if (text === '🎁 Бонус') {
@@ -64,11 +66,15 @@ bot.on('text', async (ctx) => {
 
     if (last && nowDay.diff(last, 'hour') < 24) {
       const hoursLeft = 24 - nowDay.diff(last, 'hour');
-      return ctx.reply(`🎁 Бонус можно получить через ${hoursLeft} ч.`);
+      const sent = await ctx.reply(`🎁 Бонус можно получить через ${hoursLeft} ч.`);
+      setTimeout(() => ctx.deleteMessage(sent.message_id), 5000);
+      return;
     }
 
     db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), user.id);
-    return ctx.reply('🎉 Вы получили ежедневный бонус: +5 звёзд!');
+    const sent = await ctx.reply('🎉 Вы получили ежедневный бонус: +5 звёзд!');
+    setTimeout(() => ctx.deleteMessage(sent.message_id), 5000);
+    return;
   }
 
   if (text === '👤 Профиль') {
@@ -102,13 +108,11 @@ bot.on('text', async (ctx) => {
   }
 });
 
-// Обработка команды /start
 bot.start((ctx) => {
   registerUser(ctx);
   sendMainMenu(ctx);
 });
 
-// Запуск бота
 bot.launch().then(() => {
   console.log('🤖 Бот успешно запущен!');
 });
