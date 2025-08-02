@@ -12,14 +12,16 @@ const SUPPORT_USERNAME = '@magnumsupports'; // <-- сюда ник поддер�
 const BOT_LINK = 'https://t.me/firestars_rbot?start=6587897295'; // <-- сюда вставь ссылку на бота, который нужно запускать
 const WITHDRAW_CHANNEL = '@magnumwithdraw'; // имя канала для заявок на вывод
 
-async function sendWithdrawRequest(ctx, userId, username, amount) {
-  const text = `💸 Заявка на вывод звёзд\n\nПользователь: @${username || 'без ника'} (ID: ${userId})\nСумма: ${amount}⭐`;
+function sendWithdrawRequest(ctx, userId, username, amount) {
+  const insert = db.prepare('INSERT INTO withdraws (user_id, username, amount, status) VALUES (?, ?, ?, ?)');
+  const result = insert.run(userId, username, amount, 'pending');
+  const withdrawId = result.lastInsertRowid;
 
-  await ctx.telegram.sendMessage(WITHDRAW_CHANNEL, text, {
+  ctx.telegram.sendMessage(WITHDRAW_CHANNEL, `💸 Заявка на вывод\nПользователь: @${username || 'без ника'} (ID: ${userId})\nСумма: ${amount}⭐`, {
     reply_markup: {
       inline_keyboard: [[
-        { text: '✅ Одобрить', callback_data: `approve_withdraw_${userId}_${amount}` },
-        { text: '❌ Отклонить', callback_data: `reject_withdraw_${userId}_${amount}` }
+        { text: '✅ Одобрить', callback_data: `approve_withdraw_${withdrawId}` },
+        { text: '❌ Отклонить', callback_data: `reject_withdraw_${withdrawId}` }
       ]]
     }
   });
@@ -556,24 +558,23 @@ bot.on('message', async (ctx) => {
 });
 
 bot.on('callback_query', async (ctx) => {
-  const action = ctx.callbackQuery.data;
+  const data = ctx.update.callback_query.data;
+  const [action, , , withdrawId] = data.split('_'); // используем ID
 
-  if (action && (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_'))) {
-    if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+  if (action === 'approve' || action === 'reject') {
+    const status = action === 'approve' ? 'approved' : 'rejected';
 
-    const parts = action.split('_');
-    const userId = parseInt(parts[2]);
-    const amount = parseInt(parts[3]);
+    const update = db.prepare('UPDATE withdraws SET status = ? WHERE id = ?');
+    const result = update.run(status, withdrawId);
 
-    if (action.startsWith('approve_withdraw_')) {
-      await ctx.telegram.sendMessage(userId, `✅ Ваша заявка на вывод ${amount} ⭐ одобрена!`);
-      await ctx.editMessageText(`Заявка на вывод ${amount} ⭐ одобрена.`);
+    if (result.changes > 0) {
+      const withdraw = db.prepare('SELECT user_id, amount FROM withdraws WHERE id = ?').get(withdrawId);
+      ctx.telegram.sendMessage(withdraw.user_id, `🔔 Ваша заявка на вывод ${withdraw.amount}⭐ была ${status === 'approved' ? 'одобрена' : 'отклонена'}.`);
+      ctx.reply(`Заявка успешно ${status === 'approved' ? 'одобрена' : 'отклонена'}.`);
     } else {
-      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, userId);
-      await ctx.telegram.sendMessage(userId, `❌ Ваша заявка на вывод ${amount} ⭐ отклонена.`);
-      await ctx.editMessageText(`Заявка на вывод ${amount} ⭐ отклонена.`);
+      ctx.reply('⚠️ Заявка не найдена.');
     }
   }
-})
+});
 
 bot.launch();
