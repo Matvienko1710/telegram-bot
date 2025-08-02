@@ -136,43 +136,63 @@ bot.on('callback_query', async (ctx) => {
 
 // Обработка заявок на вывод
 if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+  if (ctx.from.id !== ADMIN_ID) {
+    return ctx.answerCbQuery('⛔ Доступ запрещён');
+  }
 
   const withdrawId = parseInt(action.split('_')[2]);
-  if (!withdrawId) return ctx.answerCbQuery('❌ Ошибка: некорректный ID заявки');
+  if (!withdrawId) {
+    return ctx.answerCbQuery('❌ Ошибка: некорректный ID заявки');
+  }
 
-  const withdraw = db.prepare('SELECT * FROM withdraws WHERE id = ?').get(withdrawId);
-  if (!withdraw) return ctx.answerCbQuery('❌ Заявка не найдена');
+  const withdraw = db
+    .prepare('SELECT * FROM withdraws WHERE id = ?')
+    .get(withdrawId);
+  if (!withdraw) {
+    return ctx.answerCbQuery('❌ Заявка не найдена');
+  }
 
-  const newStatus = action.startsWith('approve_withdraw_') ? 'approved' : 'rejected';
+  const isApprove = action.startsWith('approve_withdraw_');
+  const newStatus = isApprove ? 'approved' : 'rejected';
 
-  db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
+  db.prepare('UPDATE withdraws SET status = ? WHERE id = ?')
+    .run(newStatus, withdrawId);
 
-  await ctx.telegram.editMessageText('@magnumwithdraw', withdraw.channel_message_id, null, 
+  // Берём chat_id и message_id прямо из callback_query
+  const chatId = ctx.callbackQuery.message.chat.id;
+  const messageId = ctx.callbackQuery.message.message_id;
+
+  // Редактируем исходное сообщение в канале
+  await ctx.telegram.editMessageText(
+    chatId,
+    messageId,
+    null,
     `✅ Запрос на вывод №${withdrawId}
 
 👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${withdraw.user_id}
 💫 Количество: ${withdraw.amount}⭐️ [🧸]
 
-🔄 Статус: ${newStatus}`, {
-    reply_markup: {
-      inline_keyboard: [] // Удаляем кнопки
+🔄 Статус: ${newStatus}`,
+    {
+      reply_markup: { inline_keyboard: [] } // убираем кнопки
     }
-  });
+  );
 
   // Уведомляем пользователя
-  const notifyText = action.startsWith('approve_withdraw_')
+  const notifyText = isApprove
     ? `✅ Ваша заявка на вывод ${withdraw.amount} ⭐ одобрена!`
     : `❌ Ваша заявка на вывод ${withdraw.amount} ⭐ отклонена.`;
 
-  if (action.startsWith('reject_withdraw_')) {
-    // Возвращаем звёзды
-    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(withdraw.amount, withdraw.user_id);
+  if (!isApprove) {
+    // Возвращаем звёзды при отказе
+    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?')
+      .run(withdraw.amount, withdraw.user_id);
   }
 
   await ctx.telegram.sendMessage(withdraw.user_id, notifyText);
   await ctx.answerCbQuery('Обработано.');
 }
+
 
   if (action === 'farm') {
   const cooldown = 60 * 1000;
