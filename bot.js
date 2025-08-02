@@ -28,7 +28,7 @@ bot.use(session({
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
 const SUPPORT_USERNAME = '@magnumsupports';
-const BOT_LINK = 'https://t.me/firestars_rbot';
+const BOT_LINK = 'https://t.me/MagnumTapBot';
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot';
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
@@ -166,6 +166,37 @@ bot.start(async (ctx) => {
   await sendMainMenu(ctx);
 });
 
+// Команда /support
+bot.command('support', async (ctx) => {
+  ctx.session = ctx.session || {};
+  ctx.session.waitingForSupport = true;
+  return ctx.reply('📞 Опишите вашу проблему, и мы постараемся помочь как можно скорее!');
+});
+
+// Команда /tickets
+bot.command('tickets', async (ctx) => {
+  const id = ctx.from.id;
+  const tickets = db.prepare('SELECT id, issue, status, created_at FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC').all(id);
+
+  if (tickets.length === 0) {
+    return ctx.reply('У вас нет активных тикетов.', Markup.inlineKeyboard([
+      [Markup.button.callback('📞 Создать тикет', 'create_support')],
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
+
+  const text = tickets.map(t => {
+    const created = dayjs.unix(t.created_at).format('DD.MM.YYYY HH:mm');
+    const status = t.status === 'pending' ? '⏳ Ожидает' : t.status === 'in_progress' ? '🔄 В обработке' : '✅ Решён';
+    return `📩 Тикет #${t.id}\nПроблема: ${t.issue}\nСтатус: ${status}\nСоздан: ${created}`;
+  }).join('\n\n');
+
+  return ctx.reply(`📋 Ваши тикеты:\n\n${text}`, Markup.inlineKeyboard([
+    [Markup.button.callback('📞 Создать тикет', 'create_support')],
+    [Markup.button.callback('🔙 Назад', 'back')]
+  ]));
+});
+
 bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
   const now = Date.now();
@@ -189,6 +220,109 @@ bot.on('callback_query', async (ctx) => {
     }
     await sendMainMenu(ctx);
     return ctx.answerCbQuery('✅ Подписка подтверждена');
+  }
+
+  if (action === 'create_support') {
+    ctx.session.waitingForSupport = true;
+    return ctx.editMessageText('📞 Опишите вашу проблему, и мы постараемся помочь как можно скорее!', Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
+
+  if (action.startsWith('support_ticket_')) {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
+
+    const currentIndex = action === 'support_ticket' ? 0 : parseInt(action.split('_')[2]) || 0;
+    const tickets = db.prepare('SELECT id, user_id, username, issue, status, created_at FROM support_tickets WHERE status != "resolved" ORDER BY created_at ASC').all();
+
+    if (tickets.length === 0) {
+      await ctx.deleteMessage();
+      return ctx.reply('Нет активных тикетов для обработки.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin')]
+      ]));
+    }
+
+    const index = Math.max(0, Math.min(currentIndex, tickets.length - 1));
+    const ticket = tickets[index];
+    const messages = db.prepare('SELECT message, is_admin, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC').all(ticket.id);
+    const created = dayjs.unix(ticket.created_at).format('DD.MM.YYYY HH:mm');
+    const status = ticket.status === 'pending' ? '⏳ Ожидает' : '🔄 В обработке';
+
+    const messageHistory = messages.length > 0
+      ? messages.map(m => `${m.is_admin ? '🛠 Админ' : '👤 Пользователь'} (${dayjs.unix(m.created_at).format('DD.MM.YYYY HH:mm')}): ${m.message}`).join('\n')
+      : 'Нет сообщений';
+
+    logAction(id, `view_ticket_${ticket.id}`, 'SUPPORT');
+
+    const inlineKeyboard = [
+      [
+        { text: '📝 Ответить', callback_data: `reply_ticket_${ticket.id}` },
+        { text: '✅ Решить', callback_data: `resolve_ticket_${ticket.id}` }
+      ],
+      [
+        index > 0 ? Markup.button.callback('⬅️ Предыдущий', `support_ticket_${index - 1}`) : Markup.button.callback('', ''),
+        index < tickets.length - 1 ? Markup.button.callback('Следующий ➡️', `support_ticket_${index + 1}`) : Markup.button.callback('', '')
+      ].filter(button => button.text),
+      [Markup.button.callback('🔙 Назад', 'admin')]
+    ];
+
+    return ctx.editMessageText(
+      `📩 Тикет #${ticket.id} (${index + 1}/${tickets.length})\n` +
+      `👤 Пользователь: @${ticket.username || 'без ника'} (ID: ${ticket.user_id})\n` +
+      `📜 Проблема: ${ticket.issue}\n` +
+      `🔄 Статус: ${status}\n` +
+      `📅 Создан: ${created}\n\n` +
+      `💬 История переписки:\n${messageHistory}`,
+      { reply_markup: { inline_keyboard: inlineKeyboard } }
+    );
+  }
+
+  if (action.startsWith('reply_ticket_')) {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
+
+    const ticketId = parseInt(action.split('_')[2]);
+    if (isNaN(ticketId)) return ctx.answerCbQuery('❌ Неверный ID тикета');
+
+    ctx.session.waitingForTicketReply = ticketId;
+    return ctx.editMessageText('✏️ Введите ответ для тикета:', Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', `support_ticket_0`)]
+    ]));
+  }
+
+  if (action.startsWith('resolve_ticket_')) {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
+
+    const ticketId = parseInt(action.split('_')[2]);
+    if (isNaN(ticketId)) return ctx.answerCbQuery('❌ Неверный ID тикета');
+
+    const ticket = db.prepare('SELECT user_id, issue FROM support_tickets WHERE id = ? AND status != "resolved"').get(ticketId);
+    if (!ticket) return ctx.answerCbQuery('❌ Тикет не найден или уже решён');
+
+    const transaction = db.transaction(() => {
+      db.prepare('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?').run('resolved', Math.floor(Date.now() / 1000), ticketId);
+    });
+
+    try {
+      transaction();
+      await ctx.telegram.sendMessage(ticket.user_id, `✅ Тикет #${ticketId} (${ticket.issue}) решён. Спасибо за обращение!`);
+      logAction(id, `resolve_ticket_${ticketId}`, 'SUPPORT');
+
+      const tickets = db.prepare('SELECT id FROM support_tickets WHERE status != "resolved" ORDER BY created_at ASC').all();
+      if (tickets.length === 0) {
+        await ctx.deleteMessage();
+        return ctx.reply('Нет активных тикетов для обработки.', Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Назад', 'admin')]
+        ]));
+      }
+
+      return ctx.editMessageText('✅ Тикет решён. Перейти к следующему?', Markup.inlineKeyboard([
+        [Markup.button.callback('▶️ Следующий тикет', 'support_ticket_0')],
+        [Markup.button.callback('🔙 Назад', 'admin')]
+      ]));
+    } catch (e) {
+      console.error(`Ошибка обработки тикета ID=${ticketId}:`, e);
+      return ctx.answerCbQuery('❌ Ошибка при обработке тикета', { show_alert: true });
+    }
   }
 
   if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
@@ -335,7 +469,7 @@ bot.on('callback_query', async (ctx) => {
 
     return ctx.reply(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
-      [Markup.button.url('📞 Связаться с поддержкой', `https://t.me/${SUPPORT_USERNAME.replace('@', '')}`)],
+      [Markup.button.callback('📞 Поддержка', 'create_support')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -424,6 +558,7 @@ bot.on('callback_query', async (ctx) => {
       [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
       [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
       [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
+      [Markup.button.callback('📩 Тикеты поддержки', 'support_ticket')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -522,6 +657,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
         [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
+        [Markup.button.callback('📩 Тикеты поддержки', 'support_ticket')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -633,6 +769,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
         [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
+        [Markup.button.callback('📩 Тикеты поддержки', 'support_ticket')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -684,6 +821,66 @@ bot.on('photo', async (ctx) => {
 bot.on('message', async (ctx) => {
   const id = ctx.from.id;
   ctx.session = ctx.session || {};
+
+  if (ctx.session.waitingForSupport) {
+    const issue = ctx.message.text?.trim();
+    if (!issue) return ctx.reply('❌ Пожалуйста, опишите проблему текстом.');
+
+    const transaction = db.transaction(() => {
+      const insert = db.prepare('INSERT INTO support_tickets (user_id, username, issue, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
+      const result = insert.run(id, ctx.from.username || '', issue, 'pending', Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000));
+      db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(result.lastInsertRowid, id, issue, false, Math.floor(Date.now() / 1000));
+      return result.lastInsertRowid;
+    });
+
+    try {
+      const ticketId = transaction();
+      ctx.session.waitingForSupport = false;
+      logAction(id, `create_ticket_${ticketId}`, 'SUPPORT');
+      await ctx.reply(`✅ Тикет #${ticketId} создан. Мы рассмотрим вашу проблему в ближайшее время! Используйте /tickets для просмотра статуса.`);
+    } catch (e) {
+      console.error('Ошибка создания тикета:', e);
+      await ctx.reply('❌ Ошибка при создании тикета. Попробуйте снова.');
+    }
+    return;
+  }
+
+  if (ctx.session.waitingForTicketReply && ADMIN_IDS.includes(id)) {
+    const ticketId = ctx.session.waitingForTicketReply;
+    const ticket = db.prepare('SELECT user_id, issue, status FROM support_tickets WHERE id = ? AND status != "resolved"').get(ticketId);
+    if (!ticket) {
+      ctx.session.waitingForTicketReply = null;
+      return ctx.reply('❌ Тикет не найден или уже решён.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'support_ticket_0')]
+      ]));
+    }
+
+    const message = ctx.message.text?.trim();
+    if (!message) return ctx.reply('❌ Пожалуйста, введите текст ответа.');
+
+    const transaction = db.transaction(() => {
+      db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
+        .run(ticketId, id, message, true, Math.floor(Date.now() / 1000));
+      db.prepare('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?').run('in_progress', Math.floor(Date.now() / 1000), ticketId);
+    });
+
+    try {
+      transaction();
+      await ctx.telegram.sendMessage(ticket.user_id, `📩 Ответ по тикету #${ticketId} (${ticket.issue}):\n${message}`);
+      logAction(id, `reply_ticket_${ticketId}`, 'SUPPORT');
+      ctx.session.waitingForTicketReply = null;
+      return ctx.reply('✅ Ответ отправлен пользователю.', Markup.inlineKeyboard([
+        [Markup.button.callback('▶️ Следующий тикет', 'support_ticket_0')],
+        [Markup.button.callback('🔙 Назад', 'admin')]
+      ]));
+    } catch (e) {
+      console.error(`Ошибка отправки ответа на тикет ID=${ticketId}:`, e);
+      return ctx.reply('❌ Ошибка при отправке ответа.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'support_ticket_0')]
+      ]));
+    }
+  }
 
   if (ctx.session.broadcast && ADMIN_IDS.includes(id)) {
     const users = db.prepare('SELECT id FROM users').all();
