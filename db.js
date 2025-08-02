@@ -34,7 +34,7 @@ db.prepare(`
     user_id INTEGER NOT NULL,
     file_id TEXT NOT NULL,
     approved INTEGER DEFAULT NULL,
-    task_type TEXT DEFAULT 'subscribe_channel' -- Новое поле для различия типов заданий
+    task_type TEXT DEFAULT 'subscribe_channel'
   )
 `).run();
 
