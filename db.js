@@ -9,7 +9,11 @@ db.prepare(`
     stars INTEGER DEFAULT 0,
     last_farm INTEGER DEFAULT 0,
     last_bonus TEXT DEFAULT NULL,
-    referred_by INTEGER
+    referred_by INTEGER,
+    daily_task_date TEXT DEFAULT NULL,
+    daily_task_type TEXT DEFAULT NULL,
+    daily_task_progress INTEGER DEFAULT 0,
+    daily_task_completed INTEGER DEFAULT 0
   )
 `).run();
 
@@ -23,16 +27,23 @@ db.prepare(`
   )
 `).run();
 
-// --- НАЧАЛО ИЗМЕНЕНИЯ: Таблица скриншотов ---
+// Таблица скриншотов
 db.prepare(`
   CREATE TABLE IF NOT EXISTS screenshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     user_id INTEGER NOT NULL,
     file_id TEXT NOT NULL,
-    approved INTEGER DEFAULT NULL
+    approved INTEGER DEFAULT NULL,
+    task_type TEXT DEFAULT 'subscribe_channel' -- Новое поле для различия типов заданий
   )
 `).run();
-// --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+// Добавляем task_type, если его нет
+const hasTaskType = db.prepare("PRAGMA table_info(screenshots)").all().some(col => col.name === 'task_type');
+if (!hasTaskType) {
+  db.prepare(`ALTER TABLE screenshots ADD COLUMN task_type TEXT DEFAULT 'subscribe_channel'`).run();
+  console.log('Добавлена колонка task_type в таблицу screenshots');
+}
 
 // Таблица заявок на вывод
 db.prepare(`
@@ -42,17 +53,10 @@ db.prepare(`
     username TEXT,
     amount INTEGER NOT NULL,
     status TEXT DEFAULT 'pending',
-    requested_at TEXT DEFAULT CURRENT_TIMESTAMP
+    requested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    channel_message_id INTEGER
   )
 `).run();
-
-// Добавляем колонку channel_message_id, если её нет
-const hasChannelMessageId = db.prepare("PRAGMA table_info(withdraws)").all().some(col => col.name === 'channel_message_id');
-if (!hasChannelMessageId) {
-  db.prepare(`ALTER TABLE withdraws ADD COLUMN channel_message_id INTEGER`).run();
-  console.log('Добавлена колонка channel_message_id в таблицу withdraws');
-}
-// ✅ --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 // Функция для проверки наличия колонки в таблице
 function hasColumn(tableName, columnName) {
@@ -60,28 +64,10 @@ function hasColumn(tableName, columnName) {
   return pragma.some(col => col.name === columnName);
 }
 
-// Добавляем колонки для ежедневных заданий, если их нет
-function migrateDailyTasksColumns() {
-  const columnsToAdd = [
-    { name: 'daily_task_date', type: 'TEXT', defaultValue: 'NULL' },
-    { name: 'daily_task_type', type: 'TEXT', defaultValue: 'NULL' },
-    { name: 'daily_task_progress', type: 'INTEGER', defaultValue: 0 },
-    { name: 'daily_task_completed', type: 'INTEGER', defaultValue: 0 },
-  ];
-
-  columnsToAdd.forEach(col => {
-    if (!hasColumn('users', col.name)) {
-      db.prepare(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type} DEFAULT ${col.defaultValue}`).run();
-      console.log(`Добавлена колонка ${col.name} в таблицу users`);
-    }
-  });
-}
-
 // Миграция таблицы promo_codes
 function migratePromoCodesTable() {
   const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='promo_codes'").get();
   if (!tableExists) {
-    // Таблица не существует — создаём новую с нужными полями
     db.prepare(`
       CREATE TABLE promo_codes (
         code TEXT PRIMARY KEY,
@@ -94,7 +80,6 @@ function migratePromoCodesTable() {
     return;
   }
 
-  // Таблица существует, проверим нужные колонки
   const hasActivations = hasColumn('promo_codes', 'activations_left');
   const hasUsedBy = hasColumn('promo_codes', 'used_by');
 
@@ -103,7 +88,6 @@ function migratePromoCodesTable() {
     return;
   }
 
-  // Создаём временную таблицу с нужными полями
   db.prepare(`
     CREATE TABLE promo_codes_new (
       code TEXT PRIMARY KEY,
@@ -113,22 +97,16 @@ function migratePromoCodesTable() {
     )
   `).run();
 
-  // Копируем данные из старой таблицы в новую (устанавливаем дефолтные значения)
   db.prepare(`
     INSERT OR IGNORE INTO promo_codes_new (code, reward, activations_left, used_by)
     SELECT code, reward, 1, '[]' FROM promo_codes
   `).run();
 
-  // Удаляем старую таблицу
   db.prepare(`DROP TABLE promo_codes`).run();
-
-  // Переименовываем новую таблицу в promo_codes
   db.prepare(`ALTER TABLE promo_codes_new RENAME TO promo_codes`).run();
-
   console.log('Миграция promo_codes выполнена');
 }
 
-migrateDailyTasksColumns();
 migratePromoCodesTable();
 
 module.exports = db;
