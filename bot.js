@@ -15,7 +15,7 @@ const WITHDRAW_CHANNEL = '@magnumwithdraw'; // имя канала для зая
 function sendWithdrawRequest(ctx, userId, username, amount) {
   const insert = db.prepare('INSERT INTO withdraws (user_id, username, amount, status) VALUES (?, ?, ?, ?)');
   const result = insert.run(userId, username, amount, 'pending');
-  const withdrawId = result.lastInsertRowid;
+  const withdrawId = result.lastInsertRowid;  // <-- id заявки
 
   ctx.telegram.sendMessage(WITHDRAW_CHANNEL, `💸 Заявка на вывод
 👤 Пользователь: @${username || 'без ника'} (ID: ${userId})
@@ -135,29 +135,20 @@ bot.on('callback_query', async (ctx) => {
   }
 
 // Обработка заявок на вывод
-  if (action && (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_'))) {
+  if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
 
-  const parts = action.split('_');
-  const userId = parseInt(parts[2]);
-  const amount = parseInt(parts[3]);
-  const withdrawId = parseInt(parts[4]);
+  const withdrawId = parseInt(action.split('_')[2]);
+  if (!withdrawId) return ctx.answerCbQuery('❌ Ошибка: некорректный ID заявки');
 
   const withdraw = db.prepare('SELECT * FROM withdraws WHERE id = ?').get(withdrawId);
   if (!withdraw) return ctx.answerCbQuery('❌ Заявка не найдена');
 
-  const originalMessage = `✅ Запрос на вывод №${withdrawId}
+  const newStatus = action.startsWith('approve_withdraw_') ? 'approved' : 'rejected';
 
-👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${userId}
-💫 Количество: ${amount}⭐️ [🧸]`;
-
-  const newStatus = action.startsWith('approve_withdraw_') ? '✅ Одобрено' : '❌ Отклонено';
-
-  // Обновляем статус в базе
   db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
 
-  // Обновляем сообщение в канале
-  await ctx.telegram.editMessageText('@magnumtap_withdraw', withdraw.channel_message_id, null, `${originalMessage}
+  await ctx.answerCbQuery(`Заявка ${newStatus === 'approved' ? 'одобрена' : 'отклонена'}`);
 
 🔄 Статус: ${newStatus}`, {
     reply_markup: {
