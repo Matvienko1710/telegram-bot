@@ -128,6 +128,24 @@ bot.on('callback_query', async (ctx) => {
     return ctx.answerCbQuery('✅ Подписка подтверждена');
   }
 
+// Обработка заявок на вывод
+  if (action && (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_'))) {
+    if (id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+
+    const parts = action.split('_');
+    const userId = parseInt(parts[2]);
+    const amount = parseInt(parts[3]);
+
+    if (action.startsWith('approve_withdraw_')) {
+      await ctx.telegram.sendMessage(userId, `✅ Ваша заявка на вывод ${amount} ⭐ одобрена!`);
+      await ctx.editMessageText(`Заявка на вывод ${amount} ⭐ одобрена.`);
+    } else {
+      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, userId);
+      await ctx.telegram.sendMessage(userId, `❌ Ваша заявка на вывод ${amount} ⭐ отклонена.`);
+      await ctx.editMessageText(`Заявка на вывод ${amount} ⭐ отклонена.`);
+    }
+  }
+
   if (action === 'farm') {
   const cooldown = 60 * 1000;
   if (now - user.last_farm < cooldown) {
