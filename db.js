@@ -1,7 +1,7 @@
 const Database = require('better-sqlite3');
-const db = new Database('database.db');
+const db = new Database('database.db', { verbose: console.log });
 
-// Таблица пользователей
+// Создание таблицы users
 db.prepare(`
   CREATE TABLE IF NOT EXISTS users (
     id INTEGER PRIMARY KEY,
@@ -17,80 +17,84 @@ db.prepare(`
   )
 `).run();
 
-// Таблица логов действий пользователей
+// Создание таблицы logs
 db.prepare(`
   CREATE TABLE IF NOT EXISTS logs (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    action TEXT NOT NULL,
-    timestamp INTEGER NOT NULL
+    user_id INTEGER,
+    action TEXT,
+    timestamp INTEGER
   )
 `).run();
 
-// Таблица скриншотов
+// Создание таблицы sessions
 db.prepare(`
-  CREATE TABLE IF NOT EXISTS screenshots (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
-    file_id TEXT NOT NULL,
-    approved INTEGER DEFAULT NULL,
-    task_type TEXT DEFAULT 'subscribe_channel',
-    created_at INTEGER DEFAULT (strftime('%s', 'now'))
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    data TEXT
   )
 `).run();
 
-// Добавляем task_type и created_at, если их нет
-const hasTaskType = db.prepare("PRAGMA table_info(screenshots)").all().some(col => col.name === 'task_type');
-if (!hasTaskType) {
-  db.prepare(`ALTER TABLE screenshots ADD COLUMN task_type TEXT DEFAULT 'subscribe_channel'`).run();
-  console.log('Добавлена колонка task_type в таблицу screenshots');
-}
-
-const hasCreatedAt = db.prepare("PRAGMA table_info(screenshots)").all().some(col => col.name === 'created_at');
-if (!hasCreatedAt) {
-  db.prepare(`ALTER TABLE screenshots ADD COLUMN created_at INTEGER DEFAULT (strftime('%s', 'now'))`).run();
-  console.log('Добавлена колонка created_at в таблицу screenshots');
-}
-
-// Таблица заявок на вывод
+// Создание таблицы withdraws
 db.prepare(`
   CREATE TABLE IF NOT EXISTS withdraws (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id INTEGER NOT NULL,
+    user_id INTEGER,
     username TEXT,
-    amount INTEGER NOT NULL,
-    status TEXT DEFAULT 'pending',
-    requested_at TEXT DEFAULT CURRENT_TIMESTAMP,
+    amount INTEGER,
+    status TEXT,
     channel_message_id INTEGER
   )
 `).run();
 
-// Таблица промокодов
+// Создание таблицы screenshots
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS screenshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    file_id TEXT,
+    task_type TEXT,
+    approved INTEGER,
+    created_at INTEGER
+  )
+`).run();
+
+// Создание таблицы promo_codes
 db.prepare(`
   CREATE TABLE IF NOT EXISTS promo_codes (
-    code TEXT PRIMARY KEY,
-    reward INTEGER NOT NULL,
-    activations_left INTEGER NOT NULL DEFAULT 1,
-    used_by TEXT DEFAULT '[]'
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    code TEXT UNIQUE,
+    reward INTEGER,
+    activations_left INTEGER,
+    used_by TEXT
   )
 `).run();
 
-// Таблица сессий
+// Создание таблицы stars_transactions
 db.prepare(`
-  CREATE TABLE IF NOT EXISTS sessions (
-    id TEXT PRIMARY KEY,
-    data TEXT NOT NULL
+  CREATE TABLE IF NOT EXISTS stars_transactions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    telegram_payment_id TEXT,
+    amount INTEGER,
+    item TEXT,
+    status TEXT,
+    created_at INTEGER
   )
 `).run();
 
-// Удаляем устаревшие отклонённые скриншоты (старше 7 дней)
-const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
-db.prepare('DELETE FROM screenshots WHERE approved = 0 AND created_at < ?').run(sevenDaysAgo);
-console.log('Очищены устаревшие отклонённые скриншоты');
-
-// Удаляем таблицы support_tickets и ticket_messages, если существуют
-db.prepare('DROP TABLE IF EXISTS support_tickets').run();
-db.prepare('DROP TABLE IF EXISTS ticket_messages').run();
-console.log('Таблицы support_tickets и ticket_messages удалены, если существовали');
+// Создание таблицы support_tickets
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS support_tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    username TEXT,
+    issue TEXT NOT NULL,
+    type TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'open',
+    created_at INTEGER NOT NULL,
+    channel_message_id INTEGER
+  )
+`).run();
 
 module.exports = db;
