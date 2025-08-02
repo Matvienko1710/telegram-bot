@@ -325,7 +325,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action.startsWith('approve_screen_')) {
-    db.prepare('UPDATE users SET stars = stars + 20 WHERE id = ?').run(screen.user_id);
+    db.prepare('UPDATE users SET stars = stars + 1.5 WHERE id = ?').run(screen.user_id);
     db.prepare('UPDATE screenshots SET approved = 1 WHERE id = ?').run(screenId);
 
     // Уведомление пользователю об одобрении
