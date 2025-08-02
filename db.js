@@ -23,6 +23,17 @@ db.prepare(`
   )
 `).run();
 
+// --- НАЧАЛО ИЗМЕНЕНИЯ: Добавляем таблицу screenshots для проверки скриншотов ---
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS screenshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    file_id TEXT NOT NULL,
+    approved INTEGER DEFAULT NULL
+  )
+`).run();
+// --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
 // Функция для проверки наличия колонки в таблице
 function hasColumn(tableName, columnName) {
   const pragma = db.prepare(`PRAGMA table_info(${tableName})`).all();
