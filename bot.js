@@ -148,13 +148,16 @@ bot.on('callback_query', async (ctx) => {
 
   db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
 
-  await ctx.answerCbQuery(`Заявка ${newStatus === 'approved' ? 'одобрена' : 'отклонена'}`);
+  await ctx.telegram.editMessageText('@magnumtap_withdraw', withdraw.channel_message_id, null, `✅ Запрос на вывод №${withdrawId}
+
+👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${userId}
+💫 Количество: ${amount}⭐️ [🧸]`;
 
 🔄 Статус: ${newStatus}`, {
-    reply_markup: {
-      inline_keyboard: [] // Удаляем кнопки
-    }
-  });
+  reply_markup: {
+    inline_keyboard: [] // Удаляем кнопки
+  }
+});
 
   // Уведомляем пользователя
   const notifyText = action.startsWith('approve_withdraw_')
