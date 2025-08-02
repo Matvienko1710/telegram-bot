@@ -13,6 +13,16 @@ db.prepare(`
   )
 `).run();
 
+// Таблица логов действий пользователей
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS logs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    action TEXT NOT NULL,
+    timestamp INTEGER NOT NULL
+  )
+`).run();
+
 // Функция для проверки наличия колонки в таблице
 function hasColumn(tableName, columnName) {
   const pragma = db.prepare(`PRAGMA table_info(${tableName})`).all();
