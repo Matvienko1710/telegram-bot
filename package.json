@@ -1,16 +1,32 @@
 {
-  "name": "telegram-bot",
+  "name": "magnumtap-bot",
   "version": "1.0.0",
-  "description": "Telegram bot for farming stars",
+  "description": "Telegram bot for MagnumTap with farming, referrals, and support tickets",
   "main": "bot.js",
   "scripts": {
-    "start": "node bot.js"
+    "start": "node bot.js",
+    "dev": "nodemon bot.js",
+    "postinstall": "npm rebuild better-sqlite3",
+    "lint": "eslint . --ext .js",
+    "test": "echo \"Error: no test specified\" && exit 1"
   },
   "dependencies": {
-    "telegraf": "^4.12.2",
-    "better-sqlite3": "^8.0.0",
-    "dayjs": "^1.11.7",
-    "dotenv": "^16.0.3"
+    "better-sqlite3": "^9.4.3",
+    "dayjs": "^1.11.10",
+    "dotenv": "^16.4.5",
+    "telegraf": "^4.16.3"
   },
-  "engines": { "node": "18.x" }
+  "devDependencies": {
+    "eslint": "^8.57.0",
+    "nodemon": "^3.0.3"
+  },
+  "engines": {
+    "node": "18.20.8"
+  },
+  "author": "Your Name",
+  "license": "ISC",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/yourusername/magnumtap-bot.git"
+  }
 }
