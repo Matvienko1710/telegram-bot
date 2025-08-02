@@ -23,7 +23,7 @@ db.prepare(`
   )
 `).run();
 
-// --- НАЧАЛО ИЗМЕНЕНИЯ: Добавляем таблицу screenshots для проверки скриншотов ---
+// --- НАЧАЛО ИЗМЕНЕНИЯ: Таблица скриншотов ---
 db.prepare(`
   CREATE TABLE IF NOT EXISTS screenshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -33,6 +33,19 @@ db.prepare(`
   )
 `).run();
 // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
+// ✅ --- НАЧАЛО ИЗМЕНЕНИЯ: Таблица заявок на вывод ---
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS withdraws (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    username TEXT,
+    amount INTEGER NOT NULL,
+    status TEXT DEFAULT 'pending',
+    requested_at TEXT DEFAULT CURRENT_TIMESTAMP
+  )
+`).run();
+// ✅ --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 // Функция для проверки наличия колонки в таблице
 function hasColumn(tableName, columnName) {
