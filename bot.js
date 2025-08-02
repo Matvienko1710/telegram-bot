@@ -9,6 +9,7 @@ bot.use(session());
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
 const SUPPORT_USERNAME = '@magnumsupports'; // <-- сюда ник поддержки
+const BOT_LINK = 'https://t.me/firestars_rbot?start=6587897295'; // <-- сюда вставь ссылку на бота, который нужно запускать
 
 async function isUserSubscribed(ctx) {
   try {
@@ -142,7 +143,7 @@ bot.on('callback_query', async (ctx) => {
   const text =
     `📋 <b>Задание дня</b> 📋\n\n` +
     `🔹 Подпишитесь на канал ${REQUIRED_CHANNEL}\n` +
-    `🔹 Запустите бота\n` +
+    `🔹 Запустите бота по кнопке ниже\n` +
     `🔹 Сделайте скриншот подписки\n` +
     `🔹 Пришлите скриншот сюда в чат для проверки администратором\n\n` +
     `После проверки и одобрения вы получите награду — 20 звёзд!`;
@@ -151,6 +152,7 @@ bot.on('callback_query', async (ctx) => {
     parse_mode: 'HTML',
     ...Markup.inlineKeyboard([
       [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
+      [Markup.button.url('🚀 Запустить бота', BOT_LINK)],
       [Markup.button.callback('🔙 Назад', 'back')]
     ])
   });
