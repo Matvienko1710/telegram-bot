@@ -90,7 +90,7 @@ db.prepare(`
     user_id INTEGER NOT NULL,
     username TEXT,
     issue TEXT NOT NULL,
-    status TEXT DEFAULT 'pending', -- pending, in_progress, resolved
+    status TEXT DEFAULT 'pending',
     created_at INTEGER DEFAULT (strftime('%s', 'now')),
     updated_at INTEGER DEFAULT (strftime('%s', 'now'))
   )
