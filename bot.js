@@ -67,7 +67,7 @@ async function isUserSubscribed(ctx) {
 async function sendWithdrawRequest(ctx, userId, username, amount) {
   const transaction = db.transaction(() => {
     const insert = db.prepare('INSERT INTO withdraws (user_id, username, amount, status) VALUES (?, ?, ?, ?)');
-    const result = insert.run(userId, username, amount, 'pending');
+    const result = insert.run(userId, username || '', amount, 'pending');
     return result.lastInsertRowid;
   });
 
@@ -493,7 +493,7 @@ bot.on('callback_query', async (ctx) => {
 
     const transaction = db.transaction(() => {
       db.prepare('UPDATE users SET stars = stars - ? WHERE id = ?').run(amount, ctx.from.id);
-      sendWithdrawRequest(ctx, ctx.from.id, ctx.from.username, amount);
+      sendWithdrawRequest(ctx, ctx.from.id, ctx.from.username || '', amount);
     });
 
     try {
@@ -760,7 +760,7 @@ bot.on('callback_query', async (ctx) => {
       }, { reply_markup: { inline_keyboard: inlineKeyboard } });
     } catch (e) {
       console.error(`Ошибка обработки скриншота ID=${screenId}:`, e);
-      await ctx.answerCbQuery('❌ Ошибка при обработке скриншота', { show_alert: true });
+      await ctx.answerCbQuery('❌ Ошибка при загрузке скриншота', { show_alert: true });
       await ctx.deleteMessage();
       return ctx.reply('⚙️ Админ-панель', Markup.inlineKeyboard([
         [Markup.button.callback('📊 Статистика', 'admin_stats')],
@@ -823,12 +823,37 @@ bot.on('message', async (ctx) => {
   ctx.session = ctx.session || {};
 
   if (ctx.session.waitingForSupport) {
-    const issue = ctx.message.text?.trim();
-    if (!issue) return ctx.reply('❌ Пожалуйста, опишите проблему текстом.');
+    // Проверяем, что сообщение содержит текст
+    if (!ctx.message.text || typeof ctx.message.text !== 'string') {
+      return ctx.reply('❌ Пожалуйста, опишите проблему текстом.');
+    }
+
+    const issue = ctx.message.text.trim();
+    if (issue.length === 0) {
+      return ctx.reply('❌ Описание проблемы не может быть пустым.');
+    }
+
+    // Логируем входные данные для отладки
+    console.log(`Creating ticket for user ${id}:`, {
+      user_id: id,
+      username: ctx.from.username || '',
+      issue: issue,
+      status: 'pending',
+      created_at: Math.floor(Date.now() / 1000),
+      updated_at: Math.floor(Date.now() / 1000)
+    });
 
     const transaction = db.transaction(() => {
       const insert = db.prepare('INSERT INTO support_tickets (user_id, username, issue, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
-      const result = insert.run(id, ctx.from.username || '', issue, 'pending', Math.floor(Date.now() / 1000), Math.floor(Date.now() / 1000));
+      const result = insert.run(
+        id,
+        ctx.from.username || '', // Гарантируем строку
+        issue,
+        'pending',
+        Math.floor(Date.now() / 1000),
+        Math.floor(Date.now() / 1000)
+      );
+
       db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(result.lastInsertRowid, id, issue, false, Math.floor(Date.now() / 1000));
       return result.lastInsertRowid;
@@ -856,8 +881,14 @@ bot.on('message', async (ctx) => {
       ]));
     }
 
-    const message = ctx.message.text?.trim();
-    if (!message) return ctx.reply('❌ Пожалуйста, введите текст ответа.');
+    if (!ctx.message.text || typeof ctx.message.text !== 'string') {
+      return ctx.reply('❌ Пожалуйста, введите текст ответа.');
+    }
+
+    const message = ctx.message.text.trim();
+    if (message.length === 0) {
+      return ctx.reply('❌ Ответ не может быть пустым.');
+    }
 
     const transaction = db.transaction(() => {
       db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
