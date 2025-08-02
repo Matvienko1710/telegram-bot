@@ -54,7 +54,7 @@ bot.use(session({
 
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
-const SUPPORT_USERNAME = '@magnumsupports';
+const SUPPORT_USERNAME = '@magnumsupported';
 const BOT_LINK = 'https://t.me/firestars_rbot';
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot';
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
