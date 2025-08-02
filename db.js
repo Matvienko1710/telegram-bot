@@ -34,7 +34,7 @@ db.prepare(`
 `).run();
 // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
-// ✅ --- НАЧАЛО ИЗМЕНЕНИЯ: Таблица заявок на вывод ---
+// Таблица заявок на вывод
 db.prepare(`
   CREATE TABLE IF NOT EXISTS withdraws (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -45,6 +45,13 @@ db.prepare(`
     requested_at TEXT DEFAULT CURRENT_TIMESTAMP
   )
 `).run();
+
+// Добавляем колонку channel_message_id, если её нет
+const hasChannelMessageId = db.prepare("PRAGMA table_info(withdraws)").all().some(col => col.name === 'channel_message_id');
+if (!hasChannelMessageId) {
+  db.prepare(`ALTER TABLE withdraws ADD COLUMN channel_message_id INTEGER`).run();
+  console.log('Добавлена колонка channel_message_id в таблицу withdraws');
+}
 // ✅ --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 // Функция для проверки наличия колонки в таблице
