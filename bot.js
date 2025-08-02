@@ -135,7 +135,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
 // Обработка заявок на вывод
-  if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
+if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
   if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
 
   const withdrawId = parseInt(action.split('_')[2]);
@@ -148,28 +148,29 @@ bot.on('callback_query', async (ctx) => {
 
   db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
 
-  await ctx.telegram.editMessageText('@magnumtap_withdraw', withdraw.channel_message_id, null, `✅ Запрос на вывод №${withdrawId}
+  await ctx.telegram.editMessageText('@magnumtap_withdraw', withdraw.channel_message_id, null, 
+    `✅ Запрос на вывод №${withdrawId}
 
-👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${userId}
-💫 Количество: ${amount}⭐️ [🧸]`
+👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${withdraw.user_id}
+💫 Количество: ${withdraw.amount}⭐️ [🧸]
 
 🔄 Статус: ${newStatus}`, {
-  reply_markup: {
-    inline_keyboard: [] // Удаляем кнопки
-  }
-});
+    reply_markup: {
+      inline_keyboard: [] // Удаляем кнопки
+    }
+  });
 
   // Уведомляем пользователя
   const notifyText = action.startsWith('approve_withdraw_')
-    ? `✅ Ваша заявка на вывод ${amount} ⭐ одобрена!`
-    : `❌ Ваша заявка на вывод ${amount} ⭐ отклонена.`;
+    ? `✅ Ваша заявка на вывод ${withdraw.amount} ⭐ одобрена!`
+    : `❌ Ваша заявка на вывод ${withdraw.amount} ⭐ отклонена.`;
 
   if (action.startsWith('reject_withdraw_')) {
     // Возвращаем звёзды
-    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, userId);
+    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(withdraw.amount, withdraw.user_id);
   }
 
-  await ctx.telegram.sendMessage(userId, notifyText);
+  await ctx.telegram.sendMessage(withdraw.user_id, notifyText);
   await ctx.answerCbQuery('Обработано.');
 }
 
