@@ -34,7 +34,7 @@ function sendMainMenu(ctx) {
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
 
     // --- НАЧАЛО ИЗМЕНЕНИЯ: Заменяем кнопку "Задания" ---
-    [Markup.button.callback('📋 Задания (подпишись и пришли скрин)', 'daily_tasks')],
+    [Markup.button.callback('📋 Задания', 'daily_tasks')],
     // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
     ctx.from.id === ADMIN_ID ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
