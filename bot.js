@@ -151,7 +151,7 @@ bot.on('callback_query', async (ctx) => {
   await ctx.telegram.editMessageText('@magnumtap_withdraw', withdraw.channel_message_id, null, `✅ Запрос на вывод №${withdrawId}
 
 👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${userId}
-💫 Количество: ${amount}⭐️ [🧸]`;
+💫 Количество: ${amount}⭐️ [🧸]`
 
 🔄 Статус: ${newStatus}`, {
   reply_markup: {
