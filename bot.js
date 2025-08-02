@@ -7,14 +7,14 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 
 // Настройка хранилища сессий в SQLite
 const sessionDB = {
-  get: async (key) => {
+  get: (key) => {
     const row = db.prepare('SELECT data FROM sessions WHERE id = ?').get(key);
     return row ? JSON.parse(row.data) : undefined;
   },
-  save: async (key, value) => {
+  set: (key, value) => {
     db.prepare('INSERT OR REPLACE INTO sessions (id, data) VALUES (?, ?)').run(key, JSON.stringify(value));
   },
-  delete: async (key) => {
+  delete: (key) => {
     db.prepare('DELETE FROM sessions WHERE id = ?').run(key);
   }
 };
@@ -28,7 +28,7 @@ bot.use(session({
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
 const SUPPORT_USERNAME = '@magnumsupports';
-const BOT_LINK = 'https://t.me/MagnumTapBot';
+const BOT_LINK = 'https://t.me/firestars_rbot';
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot';
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
