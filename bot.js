@@ -64,14 +64,14 @@ bot.start(async (ctx) => {
 
   await ctx.reply(welcomeText, {
     parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
+    reply_markup: Markup.inlineKeyboard([
       [Markup.button.callback('⭐ Фарм', 'farm'), Markup.button.callback('🎁 Бонус', 'bonus')],
       [Markup.button.callback('👤 Профиль', 'profile'), Markup.button.callback('🏆 Лидеры', 'leaders')],
       [Markup.button.callback('📊 Статистика', 'stats')],
       [Markup.button.callback('📩 Пригласить друзей', 'ref')],
       [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
       ...(ctx.from.id === ADMIN_ID ? [[Markup.button.callback('⚙️ Админ-панель', 'admin')]] : [])
-    ]).reply_markup
+    ])
   });
 });
 
