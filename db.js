@@ -66,49 +66,22 @@ db.prepare(`
 `).run();
 
 // Таблица промокодов
-function migratePromoCodesTable() {
-  const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='promo_codes'").get();
-  if (!tableExists) {
-    db.prepare(`
-      CREATE TABLE promo_codes (
-        code TEXT PRIMARY KEY,
-        reward INTEGER NOT NULL,
-        activations_left INTEGER NOT NULL DEFAULT 1,
-        used_by TEXT DEFAULT '[]'
-      )
-    `).run();
-    console.log('Создана новая таблица promo_codes');
-    return;
-  }
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS promo_codes (
+    code TEXT PRIMARY KEY,
+    reward INTEGER NOT NULL,
+    activations_left INTEGER NOT NULL DEFAULT 1,
+    used_by TEXT DEFAULT '[]'
+  )
+`).run();
 
-  const hasActivations = db.prepare("PRAGMA table_info(promo_codes)").all().some(col => col.name === 'activations_left');
-  const hasUsedBy = db.prepare("PRAGMA table_info(promo_codes)").all().some(col => col.name === 'used_by');
-
-  if (hasActivations && hasUsedBy) {
-    console.log('Миграция promo_codes не нужна, поля уже есть');
-    return;
-  }
-
-  db.prepare(`
-    CREATE TABLE promo_codes_new (
-      code TEXT PRIMARY KEY,
-      reward INTEGER NOT NULL,
-      activations_left INTEGER NOT NULL DEFAULT 1,
-      used_by TEXT DEFAULT '[]'
-    )
-  `).run();
-
-  db.prepare(`
-    INSERT OR IGNORE INTO promo_codes_new (code, reward, activations_left, used_by)
-    SELECT code, reward, 1, '[]' FROM promo_codes
-  `).run();
-
-  db.prepare(`DROP TABLE promo_codes`).run();
-  db.prepare(`ALTER TABLE promo_codes_new RENAME TO promo_codes`).run();
-  console.log('Миграция promo_codes выполнена');
-}
-
-migratePromoCodesTable();
+// Таблица сессий
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS sessions (
+    id TEXT PRIMARY KEY,
+    data TEXT NOT NULL
+  )
+`).run();
 
 // Очистка устаревших отклонённых скриншотов (старше 7 дней)
 const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
