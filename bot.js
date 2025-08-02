@@ -557,26 +557,35 @@ bot.on('message', async (ctx) => {
 });
 
 bot.on('callback_query', async (ctx) => {
-  const action = ctx.callbackQuery.data;
+  const data = ctx.update.callback_query.data;
+  // Разбираем callback_data: ['approve'|'reject', '{withdrawId}']
+  const [action, withdrawId] = data.split('_').slice(1);
 
-  if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
-    const requestId = action.split('_')[2];
+  // Определяем новый статус
+  const isApprove = action === 'approve';
+  const status = isApprove ? 'approved' : 'rejected';
 
-    const msg = ctx.update.callback_query.message;
-    if (!msg || !msg.text) return ctx.answerCbQuery('❌ Заявка не найдена');
+  // Пытаемся обновить статус заявки в БД
+  const update = db.prepare('UPDATE withdraws SET status = ? WHERE id = ?');
+  const result = update.run(status, withdrawId);
 
-    const newStatus = action.startsWith('approve') ? '✅ Статус: Одобрено' : '❌ Статус: Отклонено';
-    const newText = msg.text.replace(/🔄 Статус: .+/, newStatus);
+  if (result.changes > 0) {
+    // Получаем данные заявки для уведомления пользователя
+    const withdraw = db
+      .prepare('SELECT user_id, amount FROM withdraws WHERE id = ?')
+      .get(withdrawId);
 
-    try {
-      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined, newText, {
-        parse_mode: 'HTML',
-        reply_markup: { inline_keyboard: [] } // удаляем кнопки
-      });
-      await ctx.answerCbQuery('🔔 Статус обновлён');
-    } catch (e) {
-      await ctx.answerCbQuery('❌ Ошибка при обновлении');
-    }
+    // Шлём уведомление пользователю
+    await ctx.telegram.sendMessage(
+      withdraw.user_id,
+      `🔔 Ваша заявка на вывод ${withdraw.amount}⭐ была ${isApprove ? 'одобрена' : 'отклонена'}.`
+    );
+
+    // Подтверждаем нажатие кнопки админу
+    await ctx.answerCbQuery(`Заявка ${isApprove ? 'одобрена' : 'отклонена'}.`);
+  } else {
+    // Если заявка не найдена
+    await ctx.answerCbQuery('⚠️ Заявка не найдена.');
   }
 });
 
