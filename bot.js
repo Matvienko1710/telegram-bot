@@ -31,12 +31,16 @@ function sendMainMenu(ctx) {
     [Markup.button.callback('📈 Биржа', 'exchange')],
     [Markup.button.callback('📩 Пригласить друзей', 'ref')],
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
-    [Markup.button.callback('📋 Задания', 'daily_tasks')],
+
+    // --- НАЧАЛО ИЗМЕНЕНИЯ: Заменяем кнопку "Задания" ---
+    [Markup.button.callback('📋 Задания (подпишись и пришли скрин)', 'daily_tasks')],
+    // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
     ctx.from.id === ADMIN_ID ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
   ]));
 }
 
-// Функция генерации случайного задания
+// Функция генерации случайного задания (оставил, но она теперь не используется для daily_tasks)
 function getRandomDailyTask() {
   const tasks = [
     { type: 'farm_10', description: 'Соберите 10 звёзд фармом', goal: 10, reward: 10 },
@@ -68,20 +72,7 @@ bot.start(async (ctx) => {
     }
   }
 
-  // Проверка и выдача ежедневного задания
-  const day = dayjs().format('YYYY-MM-DD');
-  let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-
-  if (user.daily_task_date !== day) {
-    const task = getRandomDailyTask();
-    db.prepare(`
-      UPDATE users SET daily_task_date = ?, daily_task_type = ?, daily_task_progress = 0, daily_task_completed = 0 WHERE id = ?
-    `).run(day, task.type, id);
-    user.daily_task_date = day;
-    user.daily_task_type = task.type;
-    user.daily_task_progress = 0;
-    user.daily_task_completed = 0;
-  }
+  // НЕ выдаём ежедневное задание — теперь задание только "подпишись и пришли скрин"
 
   await ctx.reply(
     `👋 Привет, <b>${ctx.from.first_name || 'друг'}</b>!\n\n` +
@@ -112,8 +103,14 @@ bot.on('callback_query', async (ctx) => {
     if (!subscribed) {
       return ctx.answerCbQuery('❌ Подписка не найдена!', { show_alert: true });
     }
-    registerUser(ctx);
-    return sendMainMenu(ctx);
+    // Регистрация пользователя (как в оригинале)
+    const username = ctx.from.username || '';
+    const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+    if (!existing) {
+      db.prepare('INSERT INTO users (id, username) VALUES (?, ?)').run(id, username);
+    }
+    await sendMainMenu(ctx);
+    return ctx.answerCbQuery('✅ Подписка подтверждена');
   }
 
   if (action === 'farm') {
@@ -124,21 +121,7 @@ bot.on('callback_query', async (ctx) => {
     }
 
     db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, id);
-
-    // Обновляем прогресс задания farm_10
-    if (user.daily_task_type === 'farm_10' && !user.daily_task_completed) {
-      let progress = user.daily_task_progress + 1;
-      let completed = 0;
-      if (progress >= 10) {
-        completed = 1;
-        db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(id); // Награда за выполнение задания
-        return ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
-      } else {
-        return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
-      }
-    } else {
-      return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
-    }
+    return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
   }
 
   if (action === 'bonus') {
@@ -154,35 +137,23 @@ bot.on('callback_query', async (ctx) => {
     return ctx.answerCbQuery('🎉 Вы получили ежедневный бонус: +5 звёзд!', { show_alert: true });
   }
 
+  // --- НАЧАЛО ИЗМЕНЕНИЯ: Новый обработчик "Задания" ---
   if (action === 'daily_tasks') {
-    // Показываем текущее задание
-    const tasks = {
-      farm_10: { description: 'Соберите 10 звёзд фармом', goal: 10, reward: 10 },
-      invite_1: { description: 'Пригласите 1 друга', goal: 1, reward: 15 },
-      promo_use: { description: 'Активируйте промокод', goal: 1, reward: 20 },
-    };
-    const task = tasks[user.daily_task_type];
-    if (!task) return ctx.answerCbQuery('Задание не найдено', { show_alert: true });
-
-    const progress = user.daily_task_progress || 0;
-    const completed = user.daily_task_completed ? true : false;
-
-    let text = `📋 <b>Ежедневное задание</b> 📋\n\n` +
-               `${task.description}\n` +
-               `Прогресс: ${progress} / ${task.goal}\n\n`;
-
-    if (completed) {
-      text += `✅ Задание выполнено! Вы уже получили награду: +${task.reward} звёзд.`;
-    } else {
-      text += `🚀 Выполните задание, чтобы получить награду: +${task.reward} звёзд.`;
-    }
+    // Сообщение с условием задания и кнопкой подписаться
+    const text =
+      `📋 <b>Задание дня</b> 📋\n\n` +
+      `🔹 Подпишитесь на канал ${REQUIRED_CHANNEL}\n` +
+      `🔹 Сделайте скриншот подписки\n` +
+      `🔹 Пришлите скриншот сюда в чат для проверки администратором\n\n` +
+      `После проверки и одобрения вы получите награду.`;
 
     return ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+      [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]) });
   }
+  // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
-  // Обработчик новой кнопки "Биржа"
   if (action === 'exchange') {
     return ctx.editMessageText(
       `📈 <b>Биржа MagnumCoin</b>\n\n` +
@@ -192,8 +163,6 @@ bot.on('callback_query', async (ctx) => {
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Назад', 'back')]]) }
     );
   }
-
-  // Остальная логика без изменений
 
   if (['profile', 'leaders', 'stats', 'ref'].includes(action)) {
     await ctx.deleteMessage();
@@ -256,14 +225,14 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'ref') {
-  const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
-  const refText = `📩 Приглашайте друзей и получайте бонусные звёзды за каждого приглашённого!\n\n` +
-                  `Чем больше друзей — тем больше наград и возможностей.\n\n` +
-                  `Ваша реферальная ссылка:\n${link}`;
-  return ctx.reply(refText, Markup.inlineKeyboard([
-    [Markup.button.callback('🔙 Назад', 'back')]
-  ]));
-}
+    const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
+    const refText = `📩 Приглашайте друзей и получайте бонусные звёзды за каждого приглашённого!\n\n` +
+                    `Чем больше друзей — тем больше наград и возможностей.\n\n` +
+                    `Ваша реферальная ссылка:\n${link}`;
+    return ctx.reply(refText, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
 
   if (action === 'enter_code') {
     ctx.session = ctx.session || {};
@@ -278,6 +247,9 @@ bot.on('callback_query', async (ctx) => {
       [Markup.button.callback('🏆 Топ', 'admin_top')],
       [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
       [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
+      // --- НАЧАЛО ИЗМЕНЕНИЯ: Добавляем кнопку проверки скриншотов ---
+      [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
+      // --- КОНЕЦ ИЗМЕНЕНИЯ ---
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -306,11 +278,99 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
   }
 
+  // --- НАЧАЛО ИЗМЕНЕНИЯ: Обработка кнопки проверки скриншотов ---
+  if (action === 'admin_check_screens') {
+    // Получаем список непросмотренных скриншотов
+    const pending = db.prepare('SELECT * FROM screenshots WHERE approved IS NULL').all();
+
+    if (pending.length === 0) {
+      return ctx.answerCbQuery('Нет новых скриншотов для проверки.', { show_alert: true });
+    }
+
+    // Показываем первый скриншот из списка с кнопками "Одобрить" и "Отклонить"
+    const scr = pending[0];
+    const userWhoSent = db.prepare('SELECT username FROM users WHERE id = ?').get(scr.user_id);
+
+    await ctx.editMessageMedia({
+      type: 'photo',
+      media: scr.file_id,
+      caption: `📸 Скриншот от @${userWhoSent?.username || 'пользователь'} (ID: ${scr.user_id})\n\n` +
+               `Нажмите кнопку, чтобы одобрить или отклонить.`,
+    }, Markup.inlineKeyboard([
+      [
+        Markup.button.callback('✅ Одобрить', `approve_screen_${scr.id}`),
+        Markup.button.callback('❌ Отклонить', `reject_screen_${scr.id}`)
+      ],
+      [Markup.button.callback('🔙 Назад', 'admin')]
+    ]));
+  }
+
+  if (action.startsWith('approve_screen_') || action.startsWith('reject_screen_')) {
+    if (id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+
+    const screenId = parseInt(action.split('_')[2]);
+    if (!screenId) return ctx.answerCbQuery('Ошибка');
+
+    if (action.startsWith('approve_screen_')) {
+      // Одобряем — даём пользователю звёзды и отмечаем в базе
+      const screen = db.prepare('SELECT * FROM screenshots WHERE id = ?').get(screenId);
+      if (!screen || screen.approved !== null) {
+        return ctx.answerCbQuery('Скриншот уже обработан');
+      }
+
+      // Даем пользователю награду (например, 20 звёзд)
+      db.prepare('UPDATE users SET stars = stars + 20 WHERE id = ?').run(screen.user_id);
+
+      // Отметим скриншот как одобренный
+      db.prepare('UPDATE screenshots SET approved = 1 WHERE id = ?').run(screenId);
+
+      await ctx.answerCbQuery('✅ Скриншот одобрен, награда выдана');
+      return ctx.editMessageCaption(`✅ Скриншот одобрен. Награда выдана пользователю.`);
+    } else if (action.startsWith('reject_screen_')) {
+      // Отклоняем — просто отмечаем в базе
+      const screen = db.prepare('SELECT * FROM screenshots WHERE id = ?').get(screenId);
+      if (!screen || screen.approved !== null) {
+        return ctx.answerCbQuery('Скриншот уже обработан');
+      }
+
+      db.prepare('UPDATE screenshots SET approved = 0 WHERE id = ?').run(screenId);
+
+      await ctx.answerCbQuery('❌ Скриншот отклонён');
+      return ctx.editMessageCaption(`❌ Скриншот отклонён.`);
+    }
+  }
+  // --- КОНЕЦ ИЗМЕНЕНИЯ ---
+
   if (action === 'back') {
     await ctx.deleteMessage();
     return sendMainMenu(ctx);
   }
 });
+
+// --- НАЧАЛО ИЗМЕНЕНИЯ: Обработка фото от пользователя для проверки скриншотов ---
+bot.on('photo', async (ctx) => {
+  const id = ctx.from.id;
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!user) return; // если нет в базе - игнорируем
+
+  // Проверим, что пользователь ожидает отправить скрин (опционально можно убрать проверку)
+
+  // Сохраняем файл фото в БД для проверки админом
+  const photoArray = ctx.message.photo;
+  const fileId = photoArray[photoArray.length - 1].file_id; // берем самый большой размер
+
+  // Сохраняем в таблицу screenshots:
+  // Таблица должна быть создана заранее, структура примерно:
+  // id INTEGER PRIMARY KEY AUTOINCREMENT
+  // user_id INTEGER
+  // file_id TEXT
+  // approved INTEGER NULL DEFAULT NULL (null - не рассмотрен, 1 - одобрен, 0 - отклонён)
+
+  db.prepare('INSERT INTO screenshots (user_id, file_id, approved) VALUES (?, ?, NULL)').run(id, fileId);
+
+  await ctx.reply('✅ Скриншот получен и отправлен на проверку администратору. Ждите результат.');
+});
+// --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
 // Обработка промокодов и рассылки
 bot.on('message', async (ctx) => {
@@ -356,12 +416,6 @@ bot.on('message', async (ctx) => {
 
     db.prepare('UPDATE promo_codes SET activations_left = ?, used_by = ? WHERE code = ?')
       .run(newActivationsLeft, JSON.stringify(usedBy), code);
-
-    // Обновляем прогресс задания promo_use
-    if (user.daily_task_type === 'promo_use' && !user.daily_task_completed) {
-      db.prepare('UPDATE users SET daily_task_progress = 1, daily_task_completed = 1, stars = stars + ? WHERE id = ?').run(20, id);
-      ctx.reply(`🎉 Задание "Активируйте промокод" выполнено! +20 звёзд`);
-    }
 
     ctx.session.waitingForCode = false;
     return ctx.reply(`✅ Промокод успешно активирован! +${promo.reward} звёзд`);
