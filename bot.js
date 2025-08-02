@@ -236,11 +236,10 @@ bot.on('callback_query', async (ctx) => {
   const refText = `📩 Приглашайте друзей и получайте бонусные звёзды за каждого приглашённого!\n\n` +
                   `Чем больше друзей — тем больше наград и возможностей.\n\n` +
                   `Ваша реферальная ссылка:\n${link}`;
-    return ctx.reply(refText, Markup.inlineKeyboard([
-      [Markup.button.url('📩 Пригласить друзей', link)],
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
-  }
+  return ctx.reply(refText, Markup.inlineKeyboard([
+    [Markup.button.callback('🔙 Назад', 'back')]
+  ]));
+}
 
   if (action === 'enter_code') {
     ctx.session = ctx.session || {};
