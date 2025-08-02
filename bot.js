@@ -8,6 +8,7 @@ bot.use(session());
 
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
+const SUPPORT_USERNAME = '@magnumsupports'; // <-- сюда ник поддержки
 
 async function isUserSubscribed(ctx) {
   try {
@@ -132,6 +133,7 @@ bot.on('callback_query', async (ctx) => {
 
     return ctx.reply(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
+      [Markup.button.url('📞 Связаться с поддержкой', `https://t.me/${SUPPORT_USERNAME.replace('@', '')}`)],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
