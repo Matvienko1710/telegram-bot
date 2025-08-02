@@ -114,8 +114,14 @@ bot.on('callback_query', async (ctx) => {
 💫 Звёзды: ${user.stars}
 👥 Приглашено: ${invited}
 📣 Реф: ${user.referred_by || '—'}`, Markup.inlineKeyboard([
+      [Markup.button.callback('Вывести звезды', 'withdraw_stars')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
+  }
+
+  // Заглушка для кнопки "Вывести звезды"
+  if (action === 'withdraw_stars') {
+    return ctx.answerCbQuery('Функция вывода звёзд пока не реализована.', { show_alert: true });
   }
 
   if (action === 'leaders') {
@@ -268,4 +274,4 @@ function registerUser(ctx) {
   }
 }
 
-bot.launch().then(() => console.log('🤖 Бот запущен!')); 
+bot.launch().then(() => console.log('🤖 Бот запущен!'));
