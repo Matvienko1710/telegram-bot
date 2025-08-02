@@ -239,7 +239,7 @@ if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw
       `После проверки и одобрения вы получите награду.`;
 
     return ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
-      [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNELS.replace('@', '')}`)],
+      [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNELS[0].replace('@', '')}`)],
       [Markup.button.callback('▶️ Следующее задание', 'daily_tasks_2')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]) });
