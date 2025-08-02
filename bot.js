@@ -6,7 +6,7 @@ const db = require('./db');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
-const REQUIRED_CHANNEL = '@magnumtap';
+const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
 const SUPPORT_USERNAME = '@magnumsupports'; // <-- сюда ник поддержки
 const BOT_LINK = 'https://t.me/firestars_rbot?start=6587897295'; // <-- сюда вставь ссылку на бота, который нужно запускать
@@ -32,12 +32,18 @@ function sendWithdrawRequest(ctx, userId, username, amount) {
 }
 
 async function isUserSubscribed(ctx) {
-  try {
-    const status = await ctx.telegram.getChatMember(REQUIRED_CHANNEL, ctx.from.id);
-    return ['member', 'creator', 'administrator'].includes(status.status);
-  } catch {
-    return false;
-  }
+  const memberStatuses = await Promise.all(
+    REQUIRED_CHANNELS.map(async (channel) => {
+      try {
+        const member = await ctx.telegram.getChatMember(channel, ctx.from.id);
+        return ['member', 'administrator', 'creator'].includes(member.status);
+      } catch (e) {
+        console.error(`Ошибка при проверке подписки на ${channel}:`, e);
+        return false;
+      }
+    })
+  );
+  return memberStatuses.every((status) => status);
 }
 
 function sendMainMenu(ctx) {
@@ -78,11 +84,14 @@ bot.start(async (ctx) => {
 
   const subscribed = await isUserSubscribed(ctx);
   if (!subscribed) {
-    return ctx.reply(`🔒 Для доступа к функциям бота необходимо подписаться на канал: ${REQUIRED_CHANNEL}`, Markup.inlineKeyboard([
-      [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
+  return ctx.reply(
+    '🔒 Для доступа к функциям бота необходимо подписаться на каналы:',
+    Markup.inlineKeyboard([
+      ...REQUIRED_CHANNELS.map(channel => [Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)]),
       [Markup.button.callback('✅ Я подписался', 'check_sub')]
-    ]));
-  }
+    ])
+  );
+}
 
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!existing) {
