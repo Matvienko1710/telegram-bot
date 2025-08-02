@@ -27,6 +27,8 @@ function sendMainMenu(ctx) {
       Markup.button.callback('🏆 Лидеры', 'leaders'),
       Markup.button.callback('📊 Статистика', 'stats')
     ],
+    // Добавил кнопку Биржа
+    [Markup.button.callback('📈 Биржа', 'exchange')],
     [Markup.button.callback('📩 Пригласить друзей', 'ref')],
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
     [Markup.button.callback('📋 Задания', 'daily_tasks')],
@@ -178,6 +180,17 @@ bot.on('callback_query', async (ctx) => {
     return ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]) });
+  }
+
+  // Обработчик новой кнопки "Биржа"
+  if (action === 'exchange') {
+    return ctx.editMessageText(
+      `📈 <b>Биржа MagnumCoin</b>\n\n` +
+      `💱 Здесь в будущем вы сможете покупать и продавать MagnumCoin за звёзды.\n` +
+      `📊 Цена будет меняться в реальном времени, и вы сможете торговать, чтобы получать прибыль (или убыток!).\n\n` +
+      `🚧 Функция находится в разработке. Следите за обновлениями!`,
+      { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Назад', 'back')]]) }
+    );
   }
 
   // Остальная логика без изменений
@@ -351,44 +364,29 @@ bot.on('message', async (ctx) => {
     }
 
     ctx.session.waitingForCode = false;
-    return ctx.reply(`✅ Промокод активирован! +${promo.reward} звёзд`);
+    return ctx.reply(`✅ Промокод успешно активирован! +${promo.reward} звёзд`);
   }
 
   if (ctx.session?.waitingForPromo && id === ADMIN_ID) {
-    const parts = ctx.message.text.trim().split(/\s+/);
-    if (parts.length !== 3) {
-      return ctx.reply('⚠️ Неверный формат. Используйте: `КОД 10 5` (где 10 — звёзды, 5 — количество активаций)', { parse_mode: 'Markdown' });
-    }
+    // Ожидаем ввод промокода в формате: CODE123 10 5
+    const parts = ctx.message.text.trim().split(' ');
+    if (parts.length !== 3) return ctx.reply('❌ Неверный формат. Попробуйте снова.');
+
     const [code, rewardStr, activationsStr] = parts;
     const reward = parseInt(rewardStr);
     const activations = parseInt(activationsStr);
 
-    if (!code || isNaN(reward) || isNaN(activations)) {
-      return ctx.reply('⚠️ Неверный формат. Используйте: `КОД 10 5` (где 10 — звёзды, 5 — количество активаций)', { parse_mode: 'Markdown' });
-    }
+    if (!code || isNaN(reward) || isNaN(activations)) return ctx.reply('❌ Неверные данные. Попробуйте снова.');
+
+    const exists = db.prepare('SELECT * FROM promo_codes WHERE code = ?').get(code);
+    if (exists) return ctx.reply('❌ Промокод уже существует.');
 
     db.prepare('INSERT INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)')
       .run(code, reward, activations, JSON.stringify([]));
 
     ctx.session.waitingForPromo = false;
-    return ctx.reply(`✅ Промокод "${code}" на ${reward} звёзд с лимитом активаций ${activations} добавлен.`);
+    return ctx.reply(`✅ Промокод ${code} добавлен:\nНаграда: ${reward} звёзд\nОсталось активаций: ${activations}`);
   }
 });
 
-function registerUser(ctx) {
-  const id = ctx.from.id;
-  const username = ctx.from.username || '';
-  const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
-
-  const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
-  if (!existing) {
-    db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
-
-    if (referral && referral !== id) {
-      db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(referral);
-      ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +10 звёзд`);
-    }
-  }
-}
-
-bot.launch().then(() => console.log('🤖 Бот запущен!'));
+bot.launch();
