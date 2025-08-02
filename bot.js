@@ -29,14 +29,19 @@ function sendMainMenu(ctx) {
     ],
     [Markup.button.callback('📩 Пригласить друзей', 'ref')],
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
+    [Markup.button.callback('📋 Задания', 'daily_tasks')],
     ctx.from.id === ADMIN_ID ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
   ]));
 }
 
-// Логирование действий
-function logAction(userId, action) {
-  const stmt = db.prepare('INSERT INTO logs (user_id, action, timestamp) VALUES (?, ?, ?)');
-  stmt.run(userId, action, Date.now());
+// Функция генерации случайного задания
+function getRandomDailyTask() {
+  const tasks = [
+    { type: 'farm_10', description: 'Соберите 10 звёзд фармом', goal: 10, reward: 10 },
+    { type: 'invite_1', description: 'Пригласите 1 друга', goal: 1, reward: 15 },
+    { type: 'promo_use', description: 'Активируйте промокод', goal: 1, reward: 20 },
+  ];
+  return tasks[Math.floor(Math.random() * tasks.length)];
 }
 
 bot.start(async (ctx) => {
@@ -59,7 +64,21 @@ bot.start(async (ctx) => {
       db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(referral);
       ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +10 звёзд`);
     }
-    logAction(id, 'Регистрация');
+  }
+
+  // Проверка и выдача ежедневного задания
+  const day = dayjs().format('YYYY-MM-DD');
+  let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+
+  if (user.daily_task_date !== day) {
+    const task = getRandomDailyTask();
+    db.prepare(`
+      UPDATE users SET daily_task_date = ?, daily_task_type = ?, daily_task_progress = 0, daily_task_completed = 0 WHERE id = ?
+    `).run(day, task.type, id);
+    user.daily_task_date = day;
+    user.daily_task_type = task.type;
+    user.daily_task_progress = 0;
+    user.daily_task_completed = 0;
   }
 
   await ctx.reply(
@@ -82,7 +101,7 @@ bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
   const now = Date.now();
   const action = ctx.callbackQuery.data;
-  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 
   if (!user && action !== 'check_sub') return ctx.answerCbQuery('Пользователь не найден');
 
@@ -92,7 +111,6 @@ bot.on('callback_query', async (ctx) => {
       return ctx.answerCbQuery('❌ Подписка не найдена!', { show_alert: true });
     }
     registerUser(ctx);
-    logAction(id, 'Подписка подтверждена');
     return sendMainMenu(ctx);
   }
 
@@ -104,8 +122,23 @@ bot.on('callback_query', async (ctx) => {
     }
 
     db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, id);
-    logAction(id, 'Фарм +1 звезда');
-    return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
+
+    // Обновляем прогресс задания farm_10
+    if (user.daily_task_type === 'farm_10' && !user.daily_task_completed) {
+      let progress = user.daily_task_progress + 1;
+      let completed = 0;
+      if (progress >= 10) {
+        completed = 1;
+        db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(id); // Награда за выполнение задания
+        ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
+      } else {
+        ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
+      }
+      db.prepare('UPDATE users SET daily_task_progress = ?, daily_task_completed = ? WHERE id = ?').run(progress, completed, id);
+    } else {
+      return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
+    }
+    return;
   }
 
   if (action === 'bonus') {
@@ -118,9 +151,38 @@ bot.on('callback_query', async (ctx) => {
     }
 
     db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), id);
-    logAction(id, 'Ежедневный бонус +5 звезд');
     return ctx.answerCbQuery('🎉 Вы получили ежедневный бонус: +5 звёзд!', { show_alert: true });
   }
+
+  if (action === 'daily_tasks') {
+    // Показываем текущее задание
+    const tasks = {
+      farm_10: { description: 'Соберите 10 звёзд фармом', goal: 10, reward: 10 },
+      invite_1: { description: 'Пригласите 1 друга', goal: 1, reward: 15 },
+      promo_use: { description: 'Активируйте промокод', goal: 1, reward: 20 },
+    };
+    const task = tasks[user.daily_task_type];
+    if (!task) return ctx.answerCbQuery('Задание не найдено', { show_alert: true });
+
+    const progress = user.daily_task_progress || 0;
+    const completed = user.daily_task_completed ? true : false;
+
+    let text = `📋 <b>Ежедневное задание</b> 📋\n\n` +
+               `${task.description}\n` +
+               `Прогресс: ${progress} / ${task.goal}\n\n`;
+
+    if (completed) {
+      text += `✅ Задание выполнено! Вы уже получили награду: +${task.reward} звёзд.`;
+    } else {
+      text += `🚀 Выполните задание, чтобы получить награду: +${task.reward} звёзд.`;
+    }
+
+    return ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]) });
+  }
+
+  // Остальная логика без изменений
 
   if (['profile', 'leaders', 'stats', 'ref'].includes(action)) {
     await ctx.deleteMessage();
@@ -149,7 +211,6 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'withdraw_stars') {
-    logAction(id, 'Попытка вывода звезд (функция в разработке)');
     return ctx.answerCbQuery('⚙️ Функция в разработке. Скоро!', { show_alert: true });
   }
 
@@ -185,7 +246,7 @@ bot.on('callback_query', async (ctx) => {
 
   if (action === 'ref') {
     const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
-    return ctx.reply(`🤝 Ваша реферальная ссылка — поделитесь с друзьями и получайте бонусы:\n\n${link}`, Markup.inlineKeyboard([
+    return ctx.reply(`📩 Ваша реферальная ссылка:\n\n${link}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -203,7 +264,6 @@ bot.on('callback_query', async (ctx) => {
       [Markup.button.callback('🏆 Топ', 'admin_top')],
       [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
       [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
-      [Markup.button.callback('✏️ Редактировать баланс', 'admin_edit_balance')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -232,19 +292,13 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
   }
 
-  if (action === 'admin_edit_balance') {
-    ctx.session = ctx.session || {};
-    ctx.session.editBalance = true;
-    return ctx.reply('✏️ Введите ID пользователя и новое количество звёзд через пробел:\nНапример: `123456789 50`');
-  }
-
   if (action === 'back') {
     await ctx.deleteMessage();
     return sendMainMenu(ctx);
   }
 });
 
-// Обработка промокодов, рассылки и редактирования баланса
+// Обработка промокодов и рассылки
 bot.on('message', async (ctx) => {
   const id = ctx.from.id;
 
@@ -282,13 +336,18 @@ bot.on('message', async (ctx) => {
 
     db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.reward, id);
 
+    // Обновляем оставшиеся активации и список использовавших
     usedBy.push(id);
     const newActivationsLeft = promo.activations_left - 1;
 
     db.prepare('UPDATE promo_codes SET activations_left = ?, used_by = ? WHERE code = ?')
       .run(newActivationsLeft, JSON.stringify(usedBy), code);
 
-    logAction(id, `Использован промокод ${code} (+${promo.reward} звёзд)`);
+    // Обновляем прогресс задания promo_use
+    if (user.daily_task_type === 'promo_use' && !user.daily_task_completed) {
+      db.prepare('UPDATE users SET daily_task_progress = 1, daily_task_completed = 1, stars = stars + ? WHERE id = ?').run(20, id);
+      ctx.reply(`🎉 Задание "Активируйте промокод" выполнено! +20 звёзд`);
+    }
 
     ctx.session.waitingForCode = false;
     return ctx.reply(`✅ Промокод активирован! +${promo.reward} звёзд`);
@@ -310,34 +369,8 @@ bot.on('message', async (ctx) => {
     db.prepare('INSERT INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)')
       .run(code, reward, activations, JSON.stringify([]));
 
-    logAction(id, `Добавлен промокод ${code} (+${reward} звёзд, лимит ${activations})`);
-
     ctx.session.waitingForPromo = false;
     return ctx.reply(`✅ Промокод "${code}" на ${reward} звёзд с лимитом активаций ${activations} добавлен.`);
-  }
-
-  if (ctx.session?.editBalance && id === ADMIN_ID) {
-    const parts = ctx.message.text.trim().split(/\s+/);
-    if (parts.length !== 2) {
-      return ctx.reply('⚠️ Неверный формат. Используйте: `ID Звёзды` (например: `123456789 50`)');
-    }
-    const userId = parseInt(parts[0]);
-    const stars = parseInt(parts[1]);
-
-    if (isNaN(userId) || isNaN(stars) || stars < 0) {
-      return ctx.reply('⚠️ Некорректные данные. Попробуйте снова.');
-    }
-
-    const user = db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
-    if (!user) {
-      return ctx.reply('❌ Пользователь не найден.');
-    }
-
-    db.prepare('UPDATE users SET stars = ? WHERE id = ?').run(stars, userId);
-    logAction(id, `Изменил баланс пользователя ${userId} на ${stars} звёзд`);
-
-    ctx.session.editBalance = false;
-    return ctx.reply(`✅ Баланс пользователя ${userId} изменён на ${stars} звёзд.`);
   }
 });
 
