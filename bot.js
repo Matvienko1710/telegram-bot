@@ -130,21 +130,48 @@ bot.on('callback_query', async (ctx) => {
 
 // Обработка заявок на вывод
   if (action && (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_'))) {
-    if (id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
 
-    const parts = action.split('_');
-    const userId = parseInt(parts[2]);
-    const amount = parseInt(parts[3]);
+  const parts = action.split('_');
+  const userId = parseInt(parts[2]);
+  const amount = parseInt(parts[3]);
+  const withdrawId = parseInt(parts[4]);
 
-    if (action.startsWith('approve_withdraw_')) {
-      await ctx.telegram.sendMessage(userId, `✅ Ваша заявка на вывод ${amount} ⭐ одобрена!`);
-      await ctx.editMessageText(`Заявка на вывод ${amount} ⭐ одобрена.`);
-    } else {
-      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, userId);
-      await ctx.telegram.sendMessage(userId, `❌ Ваша заявка на вывод ${amount} ⭐ отклонена.`);
-      await ctx.editMessageText(`Заявка на вывод ${amount} ⭐ отклонена.`);
+  const withdraw = db.prepare('SELECT * FROM withdraws WHERE id = ?').get(withdrawId);
+  if (!withdraw) return ctx.answerCbQuery('❌ Заявка не найдена');
+
+  const originalMessage = `✅ Запрос на вывод №${withdrawId}
+
+👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${userId}
+💫 Количество: ${amount}⭐️ [🧸]`;
+
+  const newStatus = action.startsWith('approve_withdraw_') ? '✅ Одобрено' : '❌ Отклонено';
+
+  // Обновляем статус в базе
+  db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
+
+  // Обновляем сообщение в канале
+  await ctx.telegram.editMessageText('@magnumtap_withdraw', withdraw.channel_message_id, null, `${originalMessage}
+
+🔄 Статус: ${newStatus}`, {
+    reply_markup: {
+      inline_keyboard: [] // Удаляем кнопки
     }
+  });
+
+  // Уведомляем пользователя
+  const notifyText = action.startsWith('approve_withdraw_')
+    ? `✅ Ваша заявка на вывод ${amount} ⭐ одобрена!`
+    : `❌ Ваша заявка на вывод ${amount} ⭐ отклонена.`;
+
+  if (action.startsWith('reject_withdraw_')) {
+    // Возвращаем звёзды
+    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, userId);
   }
+
+  await ctx.telegram.sendMessage(userId, notifyText);
+  await ctx.answerCbQuery('Обработано.');
+}
 
   if (action === 'farm') {
   const cooldown = 60 * 1000;
