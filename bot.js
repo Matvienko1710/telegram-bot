@@ -233,13 +233,13 @@ if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw
   if (action === 'daily_tasks') {
     const text =
       `📋 <b>Задание 1 из 2: Подпишись на канал и пришли скриншот</b> 📋\n\n` +
-      `🔹 Подпишитесь на канал ${REQUIRED_CHANNEL}\n` +
+      `🔹 Подпишитесь на канал ${REQUIRED_CHANNELS}\n` +
       `🔹 Сделайте скриншот подписки\n` +
       `🔹 Пришлите скриншот сюда в чат для проверки администратором\n\n` +
       `После проверки и одобрения вы получите награду.`;
 
     return ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
-      [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
+      [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNELS.replace('@', '')}`)],
       [Markup.button.callback('▶️ Следующее задание', 'daily_tasks_2')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]) });
