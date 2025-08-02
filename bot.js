@@ -231,17 +231,16 @@ bot.on('callback_query', async (ctx) => {
 
   // Внутри вашего обработчика, например, для action 'ref':
 
-if (action === 'ref') {
+  if (action === 'ref') {
   const link = `https://t.me/${ctx.botInfo.username}?start=${ctx.from.id}`;
   const refText = `📩 Приглашайте друзей и получайте бонусные звёзды за каждого приглашённого!\n\n` +
                   `Чем больше друзей — тем больше наград и возможностей.\n\n` +
-                  `Ваша реферальная ссылка:`;
-
-  return ctx.reply(refText, Markup.inlineKeyboard([
-    [Markup.button.url('🔗 Пригласить друзей', link)],
-    [Markup.button.callback('🔙 Назад', 'back')]
-  ]));
-}
+                  `Ваша реферальная ссылка:\n${link}`;
+    return ctx.reply(refText, Markup.inlineKeyboard([
+      [Markup.button.url('📩 Пригласить друзей', link)],
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  }
 
   if (action === 'enter_code') {
     ctx.session = ctx.session || {};
