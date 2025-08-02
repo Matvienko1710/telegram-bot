@@ -9,7 +9,7 @@ bot.use(session());
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
 const SUPPORT_USERNAME = '@magnumsupports';
-const BOT_LINK = 'https://t.me/MagnumTapBot'; // Ссылка на твой бот
+const BOT_LINK = 'https://t.me/firestars_rbot'; // Ссылка на твой бот
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot'; // Ссылка на бота для задания
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
@@ -103,7 +103,7 @@ bot.start(async (ctx) => {
   if (!existing) {
     db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
     if (referral && referral !== id) {
-      db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(referral); // Изменено на 5 звёзд
+      db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(referral); // 5 звёзд за реферала
       try {
         await ctx.telegram.sendMessage(
           referral,
@@ -448,37 +448,92 @@ bot.on('callback_query', async (ctx) => {
     const pending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL').all();
 
     if (pending.length === 0) {
-      return ctx.answerCbQuery('Нет новых скриншотов для проверки.', { show_alert: true });
+      await ctx.deleteMessage();
+      return ctx.reply('Нет новых скриншотов для проверки.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin')]
+      ]));
     }
 
     const scr = pending[0];
     const userWhoSent = db.prepare('SELECT username FROM users WHERE id = ?').get(scr.user_id);
     const taskDescription = scr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
 
-    await ctx.editMessageMedia({
-      type: 'photo',
-      media: scr.file_id,
-      caption: `📸 Скриншот от @${userWhoSent?.username || 'пользователь'} (ID: ${scr.user_id})\n` +
-               `Задание: ${taskDescription}\n\n` +
-               `Нажмите кнопку, чтобы одобрить или отклонить.`,
-    }, Markup.inlineKeyboard([
-      [
-        Markup.button.callback('✅ Одобрить', `approve_screen_${scr.id}`),
-        Markup.button.callback('❌ Отклонить', `reject_screen_${scr.id}`)
-      ],
-      [Markup.button.callback('🔙 Назад', 'admin')]
-    ]));
+    console.log(`Показ скриншота для проверки: ID=${scr.id}, user=${scr.user_id}, task=${scr.task_type}`);
+
+    try {
+      await ctx.editMessageMedia({
+        type: 'photo',
+        media: scr.file_id,
+        caption: `📸 Скриншот от @${userWhoSent?.username || 'пользователь'} (ID: ${scr.user_id})\n` +
+                 `Задание: ${taskDescription}\n\n` +
+                 `Нажмите кнопку, чтобы одобрить или отклонить.`,
+      }, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Одобрить', callback_data: `approve_screen_${scr.id}` },
+              { text: '❌ Отклонить', callback_data: `reject_screen_${scr.id}` }
+            ],
+            [Markup.button.callback('🔙 Назад', 'admin')]
+          ]
+        }
+      });
+    } catch (e) {
+      console.error(`Ошибка при показе скриншота ID=${scr.id}:`, e);
+      await ctx.answerCbQuery('❌ Ошибка при загрузке скриншота', { show_alert: true });
+      await ctx.deleteMessage();
+      return ctx.reply('⚙️ Админ-панель', Markup.inlineKeyboard([
+        [Markup.button.callback('📊 Статистика', 'admin_stats')],
+        [Markup.button.callback('🏆 Топ', 'admin_top')],
+        [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
+        [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
+        [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
+        [Markup.button.callback('🔙 Назад', 'back')]
+      ]));
+    }
   }
 
   if (action.startsWith('approve_screen_') || action.startsWith('reject_screen_')) {
     if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
 
     const screenId = parseInt(action.split('_')[2]);
-    if (isNaN(screenId)) return ctx.answerCbQuery('Ошибка');
+    if (isNaN(screenId)) return ctx.answerCbQuery('❌ Неверный ID скриншота');
 
-    const screen = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE id = ?').get(screenId);
-    if (!screen || screen.approved !== null) {
-      return ctx.answerCbQuery('Скриншот уже обработан');
+    const screen = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE id = ? AND approved IS NULL').get(screenId);
+    if (!screen) {
+      await ctx.answerCbQuery('❌ Скриншот не найден или уже обработан', { show_alert: true });
+      // Показываем следующий скриншот или админ-панель
+      const nextPending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL').all();
+      if (nextPending.length === 0) {
+        await ctx.deleteMessage();
+        return ctx.reply('Нет новых скриншотов для проверки.', Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Назад', 'admin')]
+        ]));
+      }
+
+      const nextScr = nextPending[0];
+      const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(nextScr.user_id);
+      const nextTaskDescription = nextScr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
+
+      console.log(`Показ следующего скриншота: ID=${nextScr.id}, user=${nextScr.user_id}, task=${nextScr.task_type}`);
+
+      return ctx.editMessageMedia({
+        type: 'photo',
+        media: nextScr.file_id,
+        caption: `📸 Скриншот от @${nextUser?.username || 'пользователь'} (ID: ${nextScr.user_id})\n` +
+                 `Задание: ${nextTaskDescription}\n\n` +
+                 `Нажмите кнопку, чтобы одобрить или отклонить.`,
+      }, {
+        reply_markup: {
+          inline_keyboard: [
+            [
+              { text: '✅ Одобрить', callback_data: `approve_screen_${nextScr.id}` },
+              { text: '❌ Отклонить', callback_data: `reject_screen_${nextScr.id}` }
+            ],
+            [Markup.button.callback('🔙 Назад', 'admin')]
+          ]
+        }
+      });
     }
 
     const taskDescription = screen.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
@@ -510,14 +565,38 @@ bot.on('callback_query', async (ctx) => {
       logAction(screen.user_id, `reject_screen_${screen.task_type}_${screenId}`);
     }
 
-    return ctx.reply('🔙 Возврат в админ-панель', Markup.inlineKeyboard([
-      [Markup.button.callback('📊 Статистика', 'admin_stats')],
-      [Markup.button.callback('🏆 Топ', 'admin_top')],
-      [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
-      [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
-      [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
+    // Показываем следующий скриншот или админ-панель
+    const nextPending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL').all();
+    if (nextPending.length === 0) {
+      await ctx.deleteMessage();
+      return ctx.reply('Нет новых скриншотов для проверки.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin')]
+      ]));
+    }
+
+    const nextScr = nextPending[0];
+    const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(nextScr.user_id);
+    const nextTaskDescription = nextScr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
+
+    console.log(`Показ следующего скриншота: ID=${nextScr.id}, user=${nextScr.user_id}, task=${nextScr.task_type}`);
+
+    return ctx.editMessageMedia({
+      type: 'photo',
+      media: nextScr.file_id,
+      caption: `📸 Скриншот от @${nextUser?.username || 'пользователь'} (ID: ${nextScr.user_id})\n` +
+               `Задание: ${nextTaskDescription}\n\n` +
+               `Нажмите кнопку, чтобы одобрить или отклонить.`,
+    }, {
+      reply_markup: {
+        inline_keyboard: [
+          [
+            { text: '✅ Одобрить', callback_data: `approve_screen_${nextScr.id}` },
+            { text: '❌ Отклонить', callback_data: `reject_screen_${nextScr.id}` }
+          ],
+          [Markup.button.callback('🔙 Назад', 'admin')]
+        ]
+      }
+    });
   }
 
   if (action === 'back') {
