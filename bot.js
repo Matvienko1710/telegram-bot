@@ -9,23 +9,50 @@ bot.use(session());
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
 const SUPPORT_USERNAME = '@magnumsupports';
-const BOT_LINK = 'https://t.me/MagnumTapBot'; // Ссылка на твой бот
-const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot?start=6587897295'; // Ссылка на бота для задания
+const BOT_LINK = 'https://t.me/firestars_rbot';
+const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot';
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
+const SCREENSHOT_LIMIT_SECONDS = 60; // Ограничение на повторную отправку скриншота
 
-// Логирование действий
-function logAction(userId, action) {
-  db.prepare('INSERT INTO logs (user_id, action, timestamp) VALUES (?, ?, ?)').run(userId, action, Date.now());
+// Структурированное логирование
+function logAction(userId, action, category = 'GENERAL') {
+  const timestamp = new Date().toISOString();
+  db.prepare('INSERT INTO logs (user_id, action, timestamp) VALUES (?, ?, ?)').run(userId, `${category}: ${action}`, Date.now());
+  console.log(`[${timestamp}] [${category}] User ${userId}: ${action}`);
 }
 
-// Функция отправки заявки на вывод
+// Проверка подписки на каналы с кэшированием
+async function isUserSubscribed(ctx) {
+  if (ctx.session?.subscribed) return true;
+
+  const memberStatuses = await Promise.all(
+    REQUIRED_CHANNELS.map(async (channel) => {
+      try {
+        const member = await ctx.telegram.getChatMember(channel, ctx.from.id);
+        return ['member', 'administrator', 'creator'].includes(member.status);
+      } catch (e) {
+        console.error(`Ошибка проверки подписки на ${channel}:`, e);
+        return false;
+      }
+    })
+  );
+
+  const subscribed = memberStatuses.every(status => status);
+  if (subscribed) ctx.session.subscribed = true;
+  return subscribed;
+}
+
+// Отправка заявки на вывод
 async function sendWithdrawRequest(ctx, userId, username, amount) {
-  try {
+  const transaction = db.transaction(() => {
     const insert = db.prepare('INSERT INTO withdraws (user_id, username, amount, status) VALUES (?, ?, ?, ?)');
     const result = insert.run(userId, username, amount, 'pending');
-    const withdrawId = result.lastInsertRowid;
+    return result.lastInsertRowid;
+  });
 
+  try {
+    const withdrawId = transaction();
     const message = await ctx.telegram.sendMessage(WITHDRAW_CHANNEL, `💸 Заявка на вывод
 👤 Пользователь: @${username || 'без ника'} (ID: ${userId})
 💫 Сумма: ${amount}⭐
@@ -40,28 +67,11 @@ async function sendWithdrawRequest(ctx, userId, username, amount) {
     });
 
     db.prepare('UPDATE withdraws SET channel_message_id = ? WHERE id = ?').run(message.message_id, withdrawId);
-    console.log(`Заявка на вывод создана: ID=${withdrawId}, user=${userId}, amount=${amount}`);
-    logAction(userId, `withdraw_request_${amount}`);
+    logAction(userId, `withdraw_request_${amount}`, 'WITHDRAW');
   } catch (e) {
-    console.error('Ошибка при отправке заявки на вывод:', e);
+    console.error('Ошибка отправки заявки на вывод:', e);
     throw new Error('Не удалось отправить заявку на вывод');
   }
-}
-
-// Проверка подписки на каналы
-async function isUserSubscribed(ctx) {
-  const memberStatuses = await Promise.all(
-    REQUIRED_CHANNELS.map(async (channel) => {
-      try {
-        const member = await ctx.telegram.getChatMember(channel, ctx.from.id);
-        return ['member', 'administrator', 'creator'].includes(member.status);
-      } catch (e) {
-        console.error(`Ошибка при проверке подписки на ${channel}:`, e);
-        return false;
-      }
-    })
-  );
-  return memberStatuses.every((status) => status);
 }
 
 // Главное меню
@@ -99,32 +109,34 @@ bot.start(async (ctx) => {
     );
   }
 
-  const existing = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
-  if (!existing) {
-    db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
-    if (referral && referral !== id) {
-      db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(referral); // 5 звёзд за реферала
-      try {
-        await ctx.telegram.sendMessage(
-          referral,
-          `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +5 звёзд`
-        );
-        logAction(referral, `referral_reward_${id}`);
-      } catch (e) {
-        console.error(`Ошибка отправки уведомления рефералу ${referral}:`, e);
+  const transaction = db.transaction(() => {
+    const existing = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
+    if (!existing) {
+      db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
+      if (referral && referral !== id) {
+        db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(referral);
+        logAction(referral, `referral_reward_${id}`, 'REFERRAL');
       }
-      console.log(`Новый пользователь зарегистрирован: ID=${id}, username=${username}`);
-      logAction(id, 'register');
+      logAction(id, 'register', 'USER');
     }
+  });
+
+  try {
+    transaction();
+    if (referral && referral !== id) {
+      await ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +5 звёзд`);
+    }
+  } catch (e) {
+    console.error(`Ошибка регистрации пользователя ${id}:`, e);
   }
 
   await ctx.reply(
     `👋 Привет, <b>${ctx.from.first_name || 'друг'}!</b>\n\n` +
-    `Добро пожаловать в <b>MagnumTap</b> — твоё космическое приключение по сбору звёзд и получению бонусов!\n\n` +
+    `Добро пожаловать в <b>MagnumTap</b> — твоё космическое приключение по сбору звёзд!\n\n` +
     `✨ Здесь ты можешь:\n` +
     `• Зарабатывать звёзды с помощью кнопки «Фарм»\n` +
     `• Получать ежедневные бонусы\n` +
-    `• Следить за прогрессом, приглашать друзей и побеждать в топах!\n\n` +
+    `• Приглашать друзей и побеждать в топах!\n\n` +
     `🚀 Желаем успешного фарма!`,
     { parse_mode: 'HTML' }
   );
@@ -149,8 +161,7 @@ bot.on('callback_query', async (ctx) => {
     const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
     if (!existing) {
       db.prepare('INSERT INTO users (id, username) VALUES (?, ?)').run(id, username);
-      console.log(`Пользователь зарегистрирован после проверки подписки: ID=${id}`);
-      logAction(id, 'check_subscription');
+      logAction(id, 'check_subscription', 'USER');
     }
     await sendMainMenu(ctx);
     return ctx.answerCbQuery('✅ Подписка подтверждена');
@@ -158,36 +169,33 @@ bot.on('callback_query', async (ctx) => {
 
   // Обработка заявок на вывод
   if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
-    if (!ADMIN_IDS.includes(ctx.from.id)) {
-      return ctx.answerCbQuery('⛔ Доступ запрещён');
-    }
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
 
     const withdrawId = parseInt(action.split('_')[2]);
-    if (isNaN(withdrawId)) {
-      return ctx.answerCbQuery('❌ Ошибка: некорректный ID заявки');
-    }
+    if (isNaN(withdrawId)) return ctx.answerCbQuery('❌ Неверный ID заявки');
 
     const withdraw = db.prepare('SELECT id, user_id, username, amount, channel_message_id FROM withdraws WHERE id = ?').get(withdrawId);
-    if (!withdraw) {
-      return ctx.answerCbQuery('❌ Заявка не найдена');
-    }
+    if (!withdraw) return ctx.answerCbQuery('❌ Заявка не найдена');
 
     const isApprove = action.startsWith('approve_withdraw_');
     const newStatus = isApprove ? 'approved' : 'rejected';
 
-    db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
-
-    const chatId = WITHDRAW_CHANNEL;
-    const messageId = withdraw.channel_message_id;
+    const transaction = db.transaction(() => {
+      db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
+      if (!isApprove) {
+        db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(withdraw.amount, withdraw.user_id);
+      }
+    });
 
     try {
+      transaction();
       await ctx.telegram.editMessageText(
-        chatId,
-        messageId,
+        WITHDRAW_CHANNEL,
+        withdraw.channel_message_id,
         null,
         `✅ Запрос на вывод №${withdrawId}\n\n` +
         `👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${withdraw.user_id}\n` +
-        `💫 Количество: ${withdraw.amount}⭐️ [🧸]\n\n` +
+        `💫 Количество: ${withdraw.amount}⭐️\n\n` +
         `🔄 Статус: ${newStatus}`,
         { reply_markup: { inline_keyboard: [] } }
       );
@@ -196,14 +204,9 @@ bot.on('callback_query', async (ctx) => {
         ? `✅ Ваша заявка на вывод ${withdraw.amount} ⭐ одобрена!`
         : `❌ Ваша заявка на вывод ${withdraw.amount} ⭐ отклонена.`;
 
-      if (!isApprove) {
-        db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(withdraw.amount, withdraw.user_id);
-      }
-
       await ctx.telegram.sendMessage(withdraw.user_id, notifyText);
-      await ctx.answerCbQuery('Обработано.');
-      console.log(`Заявка на вывод обработана: ID=${withdrawId}, status=${newStatus}`);
-      logAction(withdraw.user_id, `withdraw_${newStatus}_${withdrawId}`);
+      logAction(withdraw.user_id, `withdraw_${newStatus}_${withdrawId}`, 'WITHDRAW');
+      await ctx.answerCbQuery('Обработано');
     } catch (e) {
       console.error('Ошибка обработки заявки:', e);
       await ctx.answerCbQuery('❌ Ошибка при обработке заявки', { show_alert: true });
@@ -219,8 +222,7 @@ bot.on('callback_query', async (ctx) => {
 
     const reward = 0.1;
     db.prepare('UPDATE users SET stars = stars + ?, last_farm = ? WHERE id = ?').run(reward, now, id);
-    console.log(`Фарм: пользователь ${id} получил ${reward} звёзд`);
-    logAction(id, `farm_${reward}`);
+    logAction(id, `farm_${reward}`, 'FARM');
     return ctx.answerCbQuery(`⭐ Вы заработали ${reward} звезды!`, { show_alert: true });
   }
 
@@ -234,8 +236,7 @@ bot.on('callback_query', async (ctx) => {
     }
 
     db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), id);
-    console.log(`Бонус выдан: пользователь ${id}, +5 звёзд`);
-    logAction(id, 'bonus_5');
+    logAction(id, 'bonus_5', 'BONUS');
     return ctx.answerCbQuery('🎉 Вы получили ежедневный бонус: +5 звёзд!', { show_alert: true });
   }
 
@@ -258,7 +259,6 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'daily_tasks_2') {
-    // Проверка, не выполнено ли задание ранее
     const existing = db.prepare('SELECT id FROM screenshots WHERE user_id = ? AND task_type = ? AND approved = 1').get(id, 'launch_bot');
     if (existing) {
       return ctx.answerCbQuery('❌ Вы уже выполнили задание "Запусти бота".', { show_alert: true });
@@ -320,9 +320,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'withdraw_stars') {
-    if (!user) {
-      return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
-    }
+    if (!user) return ctx.answerCbQuery('❌ Пользователь не найден', { show_alert: true });
     return ctx.editMessageText('Выберите сумму для вывода:', Markup.inlineKeyboard([
       [Markup.button.callback('15 ⭐', 'withdraw_15')],
       [Markup.button.callback('25 ⭐', 'withdraw_25')],
@@ -334,18 +332,17 @@ bot.on('callback_query', async (ctx) => {
 
   if (action.startsWith('withdraw_') && action !== 'withdraw_stars') {
     const amount = parseInt(action.split('_')[1]);
-    if (isNaN(amount)) {
-      return ctx.answerCbQuery('❌ Неверная сумма вывода', { show_alert: true });
-    }
+    if (isNaN(amount)) return ctx.answerCbQuery('❌ Неверная сумма вывода', { show_alert: true });
 
-    if (!user || user.stars < amount) {
-      return ctx.answerCbQuery('Недостаточно звёзд для вывода.', { show_alert: true });
-    }
+    if (!user || user.stars < amount) return ctx.answerCbQuery('Недостаточно звёзд для вывода.', { show_alert: true });
 
-    db.prepare('UPDATE users SET stars = stars - ? WHERE id = ?').run(amount, ctx.from.id);
+    const transaction = db.transaction(() => {
+      db.prepare('UPDATE users SET stars = stars - ? WHERE id = ?').run(amount, ctx.from.id);
+      sendWithdrawRequest(ctx, ctx.from.id, ctx.from.username, amount);
+    });
 
     try {
-      await sendWithdrawRequest(ctx, ctx.from.id, ctx.from.username, amount);
+      transaction();
       return ctx.editMessageText(`✅ Заявка на вывод ${amount} ⭐ отправлена на обработку.`, Markup.inlineKeyboard([
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
@@ -398,24 +395,16 @@ bot.on('callback_query', async (ctx) => {
 
   if (action === 'admin') {
     if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
-    // Проверяем, является ли текущее сообщение фото
     if (ctx.callbackQuery.message.photo) {
       await ctx.deleteMessage();
-      return ctx.reply(`⚙️ Админ-панель`, Markup.inlineKeyboard([
-        [Markup.button.callback('📊 Статистика', 'admin_stats')],
-        [Markup.button.callback('🏆 Топ', 'admin_top')],
-        [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
-        [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
-        [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
-        [Markup.button.callback('🔙 Назад', 'back')]
-      ]));
     }
-    return ctx.editMessageText(`⚙️ Админ-панель`, Markup.inlineKeyboard([
+    return ctx.reply(`⚙️ Админ-панель`, Markup.inlineKeyboard([
       [Markup.button.callback('📊 Статистика', 'admin_stats')],
       [Markup.button.callback('🏆 Топ', 'admin_top')],
       [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
       [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
       [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
+      [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -444,8 +433,32 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
   }
 
-  if (action === 'admin_check_screens') {
-    const pending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL').all();
+  if (action === 'admin_screen_stats') {
+    const stats = db.prepare(`
+      SELECT 
+        task_type,
+        SUM(CASE WHEN approved IS NULL THEN 1 ELSE 0 END) as pending,
+        SUM(CASE WHEN approved = 1 THEN 1 ELSE 0 END) as approved,
+        SUM(CASE WHEN approved = 0 THEN 1 ELSE 0 END) as rejected
+      FROM screenshots
+      GROUP BY task_type
+    `).all();
+
+    const text = stats.map(s => 
+      `📸 ${s.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал'}:\n` +
+      `⏳ Ожидает: ${s.pending}\n` +
+      `✅ Одобрено: ${s.approved}\n` +
+      `❌ Отклонено: ${s.rejected}`
+    ).join('\n\n');
+
+    return ctx.reply(`📈 Статистика скриншотов:\n\n${text || 'Нет данных'}`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'admin')]
+    ]));
+  }
+
+  if (action.startsWith('admin_check_screens')) {
+    const currentIndex = action === 'admin_check_screens' ? 0 : parseInt(action.split('_')[3]) || 0;
+    const pending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL ORDER BY created_at ASC').all();
 
     if (pending.length === 0) {
       await ctx.deleteMessage();
@@ -454,32 +467,35 @@ bot.on('callback_query', async (ctx) => {
       ]));
     }
 
-    const scr = pending[0];
+    const index = Math.max(0, Math.min(currentIndex, pending.length - 1));
+    const scr = pending[index];
     const userWhoSent = db.prepare('SELECT username FROM users WHERE id = ?').get(scr.user_id);
     const taskDescription = scr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
 
-    console.log(`Показ скриншота для проверки: ID=${scr.id}, user=${scr.user_id}, task=${scr.task_type}`);
+    logAction(id, `view_screenshot_${scr.id}_type_${scr.task_type}`, 'SCREENSHOT');
+
+    const inlineKeyboard = [
+      [
+        { text: '✅ Одобрить', callback_data: `approve_screen_${scr.id}` },
+        { text: '❌ Отклонить', callback_data: `reject_screen_${scr.id}` }
+      ],
+      [
+        index > 0 ? Markup.button.callback('⬅️ Предыдущий', `admin_check_screens_${index - 1}`) : Markup.button.callback('', ''),
+        index < pending.length - 1 ? Markup.button.callback('Следующий ➡️', `admin_check_screens_${index + 1}`) : Markup.button.callback('', '')
+      ].filter(button => button.text),
+      [Markup.button.callback('🔙 Назад', 'admin')]
+    ];
 
     try {
       await ctx.editMessageMedia({
         type: 'photo',
         media: scr.file_id,
-        caption: `📸 Скриншот от @${userWhoSent?.username || 'пользователь'} (ID: ${scr.user_id})\n` +
+        caption: `📸 Скриншот ${index + 1}/${pending.length} от @${userWhoSent?.username || 'пользователь'} (ID: ${scr.user_id})\n` +
                  `Задание: ${taskDescription}\n\n` +
                  `Нажмите кнопку, чтобы одобрить или отклонить.`,
-      }, {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '✅ Одобрить', callback_data: `approve_screen_${scr.id}` },
-              { text: '❌ Отклонить', callback_data: `reject_screen_${scr.id}` }
-            ],
-            [Markup.button.callback('🔙 Назад', 'admin')]
-          ]
-        }
-      });
+      }, { reply_markup: { inline_keyboard: inlineKeyboard } });
     } catch (e) {
-      console.error(`Ошибка при показе скриншота ID=${scr.id}:`, e);
+      console.error(`Ошибка показа скриншота ID=${scr.id}:`, e);
       await ctx.answerCbQuery('❌ Ошибка при загрузке скриншота', { show_alert: true });
       await ctx.deleteMessage();
       return ctx.reply('⚙️ Админ-панель', Markup.inlineKeyboard([
@@ -488,6 +504,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
         [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
+        [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -502,101 +519,79 @@ bot.on('callback_query', async (ctx) => {
     const screen = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE id = ? AND approved IS NULL').get(screenId);
     if (!screen) {
       await ctx.answerCbQuery('❌ Скриншот не найден или уже обработан', { show_alert: true });
-      // Показываем следующий скриншот или админ-панель
-      const nextPending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL').all();
-      if (nextPending.length === 0) {
+      return ctx.telegram.sendMessage(id, 'Нет новых скриншотов для проверки.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin')]
+      ]));
+    }
+
+    const taskDescription = screen.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
+    const isApprove = action.startsWith('approve_screen_');
+
+    const transaction = db.transaction(() => {
+      if (isApprove) {
+        db.prepare('UPDATE users SET stars = stars + 1.5, daily_task_completed = daily_task_completed + 1 WHERE id = ?').run(screen.user_id);
+        db.prepare('UPDATE screenshots SET approved = 1 WHERE id = ?').run(screenId);
+      } else {
+        db.prepare('UPDATE screenshots SET approved = 0 WHERE id = ?').run(screenId);
+      }
+    });
+
+    try {
+      transaction();
+      const notifyText = isApprove
+        ? `✅ Ваш скриншот для задания "${taskDescription}" одобрен! +1.5 звёзд 🎉`
+        : `❌ Ваш скриншот для задания "${taskDescription}" отклонён. Пожалуйста, отправьте корректный скриншот.`;
+
+      await ctx.telegram.sendMessage(screen.user_id, notifyText);
+      await ctx.editMessageCaption(`✅ Скриншот для "${taskDescription}" ${isApprove ? 'одобрен' : 'отклонён'}.`);
+      logAction(screen.user_id, `${isApprove ? 'approve' : 'reject'}_screen_${screen.task_type}_${screenId}`, 'SCREENSHOT');
+
+      // Показ следующего скриншота
+      const pending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL ORDER BY created_at ASC').all();
+      if (pending.length === 0) {
         await ctx.deleteMessage();
         return ctx.reply('Нет новых скриншотов для проверки.', Markup.inlineKeyboard([
           [Markup.button.callback('🔙 Назад', 'admin')]
         ]));
       }
 
-      const nextScr = nextPending[0];
+      const nextScr = pending[0];
       const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(nextScr.user_id);
       const nextTaskDescription = nextScr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
 
-      console.log(`Показ следующего скриншота: ID=${nextScr.id}, user=${nextScr.user_id}, task=${nextScr.task_type}`);
+      const inlineKeyboard = [
+        [
+          { text: '✅ Одобрить', callback_data: `approve_screen_${nextScr.id}` },
+          { text: '❌ Отклонить', callback_data: `reject_screen_${nextScr.id}` }
+        ],
+        [
+          Markup.button.callback('⬅️ Предыдущий', 'admin_check_screens_0'),
+          pending.length > 1 ? Markup.button.callback('Следующий ➡️', `admin_check_screens_1`) : Markup.button.callback('', '')
+        ].filter(button => button.text),
+        [Markup.button.callback('🔙 Назад', 'admin')]
+      ];
 
-      return ctx.editMessageMedia({
+      await ctx.editMessageMedia({
         type: 'photo',
         media: nextScr.file_id,
-        caption: `📸 Скриншот от @${nextUser?.username || 'пользователь'} (ID: ${nextScr.user_id})\n` +
+        caption: `📸 Скриншот 1/${pending.length} от @${nextUser?.username || 'пользователь'} (ID: ${nextScr.user_id})\n` +
                  `Задание: ${nextTaskDescription}\n\n` +
                  `Нажмите кнопку, чтобы одобрить или отклонить.`,
-      }, {
-        reply_markup: {
-          inline_keyboard: [
-            [
-              { text: '✅ Одобрить', callback_data: `approve_screen_${nextScr.id}` },
-              { text: '❌ Отклонить', callback_data: `reject_screen_${nextScr.id}` }
-            ],
-            [Markup.button.callback('🔙 Назад', 'admin')]
-          ]
-        }
-      });
-    }
-
-    const taskDescription = screen.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
-
-    if (action.startsWith('approve_screen_')) {
-      db.prepare('UPDATE users SET stars = stars + 1.5, daily_task_completed = daily_task_completed + 1 WHERE id = ?').run(screen.user_id);
-      db.prepare('UPDATE screenshots SET approved = 1 WHERE id = ?').run(screenId);
-
-      try {
-        await ctx.telegram.sendMessage(screen.user_id, `✅ Ваш скриншот для задания "${taskDescription}" одобрен! +1.5 звёзд 🎉`);
-      } catch (e) {
-        console.error(`Ошибка уведомления пользователя ${screen.user_id}:`, e);
-      }
-
-      await ctx.editMessageCaption(`✅ Скриншот для "${taskDescription}" одобрен. Награда выдана пользователю.`);
-      console.log(`Скриншот одобрен: ID=${screenId}, user=${screen.user_id}, task=${screen.task_type}`);
-      logAction(screen.user_id, `approve_screen_${screen.task_type}_${screenId}`);
-    } else {
-      db.prepare('UPDATE screenshots SET approved = 0 WHERE id = ?').run(screenId);
-
-      try {
-        await ctx.telegram.sendMessage(screen.user_id, `❌ Ваш скриншот для задания "${taskDescription}" отклонён. Пожалуйста, убедитесь, что вы отправили корректный скриншот.`);
-      } catch (e) {
-        console.error(`Ошибка уведомления пользователя ${screen.user_id}:`, e);
-      }
-
-      await ctx.editMessageCaption(`❌ Скриншот для "${taskDescription}" отклонён.`);
-      console.log(`Скриншот отклонён: ID=${screenId}, user=${screen.user_id}, task=${screen.task_type}`);
-      logAction(screen.user_id, `reject_screen_${screen.task_type}_${screenId}`);
-    }
-
-    // Показываем следующий скриншот или админ-панель
-    const nextPending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL').all();
-    if (nextPending.length === 0) {
+      }, { reply_markup: { inline_keyboard: inlineKeyboard } });
+    } catch (e) {
+      console.error(`Ошибка обработки скриншота ID=${screenId}:`, e);
+      await ctx.answerCbQuery('❌ Ошибка при обработке скриншота', { show_alert: true });
       await ctx.deleteMessage();
-      return ctx.reply('Нет новых скриншотов для проверки.', Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Назад', 'admin')]
+      return ctx.reply('⚙️ Админ-панель', Markup.inlineKeyboard([
+        [Markup.button.callback('📊 Статистика', 'admin_stats')],
+        [Markup.button.callback('🏆 Топ', 'admin_top')],
+        [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
+        [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
+        [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
+        [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
+        [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
-
-    const nextScr = nextPending[0];
-    const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(nextScr.user_id);
-    const nextTaskDescription = nextScr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
-
-    console.log(`Показ следующего скриншота: ID=${nextScr.id}, user=${nextScr.user_id}, task=${nextScr.task_type}`);
-
-    return ctx.editMessageMedia({
-      type: 'photo',
-      media: nextScr.file_id,
-      caption: `📸 Скриншот от @${nextUser?.username || 'пользователь'} (ID: ${nextScr.user_id})\n` +
-               `Задание: ${nextTaskDescription}\n\n` +
-               `Нажмите кнопку, чтобы одобрить или отклонить.`,
-    }, {
-      reply_markup: {
-        inline_keyboard: [
-          [
-            { text: '✅ Одобрить', callback_data: `approve_screen_${nextScr.id}` },
-            { text: '❌ Отклонить', callback_data: `reject_screen_${nextScr.id}` }
-          ],
-          [Markup.button.callback('🔙 Назад', 'admin')]
-        ]
-      }
-    });
   }
 
   if (action === 'back') {
@@ -615,18 +610,24 @@ bot.on('photo', async (ctx) => {
     return ctx.reply('❌ Вы не подписаны на все необходимые каналы. Подпишитесь и попробуйте снова.');
   }
 
+  const taskType = ctx.session?.waitingForTask === 'launch_bot' ? 'launch_bot' : 'subscribe_channel';
+  const lastScreenshot = db.prepare('SELECT created_at FROM screenshots WHERE user_id = ? AND task_type = ? AND approved IS NULL ORDER BY created_at DESC LIMIT 1').get(id, taskType);
+
+  if (lastScreenshot && (Date.now() / 1000 - lastScreenshot.created_at) < SCREENSHOT_LIMIT_SECONDS) {
+    const secondsLeft = Math.ceil(SCREENSHOT_LIMIT_SECONDS - (Date.now() / 1000 - lastScreenshot.created_at));
+    return ctx.reply(`⏳ Пожалуйста, подождите ${secondsLeft} сек. перед отправкой нового скриншота.`);
+  }
+
   const photoArray = ctx.message.photo;
   const fileId = photoArray[photoArray.length - 1].file_id;
 
-  const taskType = ctx.session?.waitingForTask === 'launch_bot' ? 'launch_bot' : 'subscribe_channel';
-  db.prepare('INSERT INTO screenshots (user_id, file_id, approved, task_type) VALUES (?, ?, NULL, ?)').run(id, fileId, taskType);
+  db.prepare('INSERT INTO screenshots (user_id, file_id, task_type, created_at) VALUES (?, ?, ?, ?)')
+    .run(id, fileId, taskType, Math.floor(Date.now() / 1000));
 
-  await ctx.reply(`✅ Скриншот для задания "${taskType === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал'}" получен и отправлен на проверку администратору. Ждите результат.`);
-  console.log(`Скриншот получен: пользователь ${id}, task=${taskType}`);
-  logAction(id, `submit_screen_${taskType}`);
+  await ctx.reply(`✅ Скриншот для задания "${taskType === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал'}" отправлен на проверку.`);
+  logAction(id, `submit_screen_${taskType}`, 'SCREENSHOT');
 
   ctx.session.waitingForTask = null;
-
   try {
     await ctx.deleteMessage();
   } catch (e) {
@@ -647,8 +648,7 @@ bot.on('message', async (ctx) => {
       }
     }
     ctx.session.broadcast = false;
-    console.log(`Рассылка завершена админом ${id}`);
-    logAction(id, 'broadcast');
+    logAction(id, 'broadcast', 'ADMIN');
     return ctx.reply('✅ Рассылка завершена.');
   }
 
@@ -663,27 +663,25 @@ bot.on('message', async (ctx) => {
 
     if (promo.activations_left === 0) {
       ctx.session.waitingForCode = false;
-      return ctx.reply('⚠️ Промокод больше не активен (лимит активаций исчерпан).');
+      return ctx.reply('⚠️ Промокод больше не активен.');
     }
 
     let usedBy = promo.used_by ? JSON.parse(promo.used_by) : [];
-
     if (usedBy.includes(id)) {
       ctx.session.waitingForCode = false;
       return ctx.reply('⚠️ Вы уже использовали этот промокод.');
     }
 
-    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.reward, id);
+    const transaction = db.transaction(() => {
+      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.reward, id);
+      usedBy.push(id);
+      db.prepare('UPDATE promo_codes SET activations_left = ?, used_by = ? WHERE code = ?')
+        .run(promo.activations_left - 1, JSON.stringify(usedBy), code);
+    });
 
-    usedBy.push(id);
-    const newActivationsLeft = promo.activations_left - 1;
-
-    db.prepare('UPDATE promo_codes SET activations_left = ?, used_by = ? WHERE code = ?')
-      .run(newActivationsLeft, JSON.stringify(usedBy), code);
-
+    transaction();
     ctx.session.waitingForCode = false;
-    console.log(`Промокод активирован: код=${code}, пользователь=${id}, награда=${promo.reward}`);
-    logAction(id, `promo_${code}_${promo.reward}`);
+    logAction(id, `promo_${code}_${promo.reward}`, 'PROMO');
     return ctx.reply(`✅ Промокод успешно активирован! +${promo.reward} звёзд`);
   }
 
@@ -704,8 +702,7 @@ bot.on('message', async (ctx) => {
       .run(code, reward, activations, JSON.stringify([]));
 
     ctx.session.waitingForPromo = false;
-    console.log(`Промокод добавлен: код=${code}, награда=${reward}, активаций=${activations}`);
-    logAction(id, `add_promo_${code}`);
+    logAction(id, `add_promo_${code}`, 'ADMIN');
     return ctx.reply(`✅ Промокод ${code} добавлен:\nНаграда: ${reward} звёзд\nОсталось активаций: ${activations}`);
   }
 });
