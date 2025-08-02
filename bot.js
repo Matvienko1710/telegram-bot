@@ -528,23 +528,25 @@ bot.on('message', async (ctx) => {
   }
 });
 
-if (action && (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_'))) {
-  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+bot.on('callback_query', async (ctx) => {
+  const action = ctx.callbackQuery.data;
 
-  const parts = action.split('_');
-  const userId = parseInt(parts[2]);
-  const amount = parseInt(parts[3]);
+  if (action && (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_'))) {
+    if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
 
-  if (action.startsWith('approve_withdraw_')) {
-    // Отправляем пользователю уведомление
-    await ctx.telegram.sendMessage(userId, `✅ Ваша заявка на вывод ${amount} ⭐ одобрена!`);
-    await ctx.editMessageText(`Заявка одобрена.`);
-  } else {
-    // Возвращаем звёзды пользователю
-    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, userId);
-    await ctx.telegram.sendMessage(userId, `❌ Ваша заявка на вывод ${amount} ⭐ отклонена.`);
-    await ctx.editMessageText(`Заявка отклонена.`);
+    const parts = action.split('_');
+    const userId = parseInt(parts[2]);
+    const amount = parseInt(parts[3]);
+
+    if (action.startsWith('approve_withdraw_')) {
+      await ctx.telegram.sendMessage(userId, `✅ Ваша заявка на вывод ${amount} ⭐ одобрена!`);
+      await ctx.editMessageText(`Заявка на вывод ${amount} ⭐ одобрена.`);
+    } else {
+      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, userId);
+      await ctx.telegram.sendMessage(userId, `❌ Ваша заявка на вывод ${amount} ⭐ отклонена.`);
+      await ctx.editMessageText(`Заявка на вывод ${amount} ⭐ отклонена.`);
+    }
   }
-}
+})
 
 bot.launch();
