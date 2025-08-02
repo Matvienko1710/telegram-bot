@@ -306,39 +306,47 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action.startsWith('approve_screen_') || action.startsWith('reject_screen_')) {
-    if (id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+  if (id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
 
-    const screenId = parseInt(action.split('_')[2]);
-    if (!screenId) return ctx.answerCbQuery('Ошибка');
+  const screenId = parseInt(action.split('_')[2]);
+  if (!screenId) return ctx.answerCbQuery('Ошибка');
 
-    if (action.startsWith('approve_screen_')) {
-      // Одобряем — даём пользователю звёзды и отмечаем в базе
-      const screen = db.prepare('SELECT * FROM screenshots WHERE id = ?').get(screenId);
-      if (!screen || screen.approved !== null) {
-        return ctx.answerCbQuery('Скриншот уже обработан');
-      }
-
-      // Даем пользователю награду (например, 20 звёзд)
-      db.prepare('UPDATE users SET stars = stars + 20 WHERE id = ?').run(screen.user_id);
-
-      // Отметим скриншот как одобренный
-      db.prepare('UPDATE screenshots SET approved = 1 WHERE id = ?').run(screenId);
-
-      await ctx.answerCbQuery('✅ Скриншот одобрен, награда выдана');
-      return ctx.editMessageCaption(`✅ Скриншот одобрен. Награда выдана пользователю.`);
-    } else if (action.startsWith('reject_screen_')) {
-      // Отклоняем — просто отмечаем в базе
-      const screen = db.prepare('SELECT * FROM screenshots WHERE id = ?').get(screenId);
-      if (!screen || screen.approved !== null) {
-        return ctx.answerCbQuery('Скриншот уже обработан');
-      }
-
-      db.prepare('UPDATE screenshots SET approved = 0 WHERE id = ?').run(screenId);
-
-      await ctx.answerCbQuery('❌ Скриншот отклонён');
-      return ctx.editMessageCaption(`❌ Скриншот отклонён.`);
-    }
+  const screen = db.prepare('SELECT * FROM screenshots WHERE id = ?').get(screenId);
+  if (!screen || screen.approved !== null) {
+    return ctx.answerCbQuery('Скриншот уже обработан');
   }
+
+  if (action.startsWith('approve_screen_')) {
+    db.prepare('UPDATE users SET stars = stars + 20 WHERE id = ?').run(screen.user_id);
+    db.prepare('UPDATE screenshots SET approved = 1 WHERE id = ?').run(screenId);
+
+    // Уведомление пользователю об одобрении
+    try {
+      await ctx.telegram.sendMessage(screen.user_id, '✅ Ваш скриншот был одобрен! +20 звёзд за выполнение задания 🎉');
+    } catch (e) {}
+
+    await ctx.editMessageCaption(`✅ Скриншот одобрен. Награда выдана пользователю.`);
+  } else {
+    db.prepare('UPDATE screenshots SET approved = 0 WHERE id = ?').run(screenId);
+
+    // Уведомление пользователю об отклонении
+    try {
+      await ctx.telegram.sendMessage(screen.user_id, '❌ Ваш скриншот был отклонён. Пожалуйста, убедитесь, что вы действительно подписались и отправили корректный скриншот.');
+    } catch (e) {}
+
+    await ctx.editMessageCaption(`❌ Скриншот отклонён.`);
+  }
+
+  // Возврат в админ-панель
+  return ctx.reply('🔙 Возврат в админ-панель', Markup.inlineKeyboard([
+    [Markup.button.callback('📊 Статистика', 'admin_stats')],
+    [Markup.button.callback('🏆 Топ', 'admin_top')],
+    [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
+    [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
+    [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
+    [Markup.button.callback('🔙 Назад', 'back')]
+  ]));
+}
   // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
   if (action === 'back') {
