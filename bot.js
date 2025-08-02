@@ -28,7 +28,7 @@ bot.use(session({
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
 const SUPPORT_USERNAME = '@magnumsupports';
-const BOT_LINK = 'https://t.me/MagnumTapBot';
+const BOT_LINK = 'https://t.me/firestars_rbot';
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot';
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
@@ -110,6 +110,21 @@ function sendMainMenu(ctx) {
     ADMIN_IDS.includes(ctx.from.id) ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
   ]));
 }
+
+// Команда /backup для сохранения базы данных
+bot.command('backup', (ctx) => {
+  if (!ADMIN_IDS.includes(ctx.from.id)) return ctx.reply('⛔ Доступ запрещён');
+  const fs = require('fs');
+  const backupPath = 'backup_database.db';
+  try {
+    fs.copyFileSync('database.db', backupPath);
+    ctx.replyWithDocument({ source: backupPath, filename: 'database.db' });
+    logAction(ctx.from.id, 'backup_database', 'ADMIN');
+  } catch (e) {
+    console.error('Ошибка создания бэкапа:', e);
+    ctx.reply('❌ Ошибка при создании бэкапа базы данных.');
+  }
+});
 
 bot.start(async (ctx) => {
   const id = ctx.from.id;
@@ -223,6 +238,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'create_support') {
+    console.log(`User ${id} clicked create_support, session:`, ctx.session);
     ctx.session.waitingForSupport = true;
     return ctx.editMessageText('📞 Опишите вашу проблему, и мы постараемся помочь как можно скорее!', Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
@@ -819,40 +835,84 @@ bot.on('photo', async (ctx) => {
 });
 
 bot.on('message', async (ctx) => {
-  const id = ctx.from.id;
+  const id = ctx.from ? ctx.from.id : null;
   ctx.session = ctx.session || {};
 
+  // Проверяем наличие ctx.from
+  if (!id) {
+    console.error('Ошибка: ctx.from отсутствует', ctx);
+    return ctx.reply('❌ Ошибка: не удалось определить пользователя. Попробуйте снова.');
+  }
+
+  // Проверка подписки
+  const subscribed = await isUserSubscribed(ctx);
+  if (!subscribed) {
+    return ctx.reply(
+      '🔒 Для доступа к функциям бота необходимо подписаться на каналы:',
+      Markup.inlineKeyboard([
+        ...REQUIRED_CHANNELS.map(channel => [
+          Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
+        ]),
+        [Markup.button.callback('✅ Я подписался', 'check_sub')]
+      ])
+    );
+  }
+
+  // Проверяем, ожидается ли сообщение для поддержки
   if (ctx.session.waitingForSupport) {
-    // Проверяем, что сообщение содержит текст
-    if (!ctx.message.text || typeof ctx.message.text !== 'string') {
-      return ctx.reply('❌ Пожалуйста, опишите проблему текстом.');
+    // Проверяем наличие текста в сообщении
+    if (!ctx.message || !ctx.message.text || typeof ctx.message.text !== 'string') {
+      console.error('Ошибка: сообщение не содержит текст', { message: ctx.message });
+      return ctx.reply('❌ Пожалуйста, опишите проблему текстом (без стикеров, фото или других данных).');
     }
 
     const issue = ctx.message.text.trim();
     if (issue.length === 0) {
+      console.error('Ошибка: пустое описание проблемы', { issue });
       return ctx.reply('❌ Описание проблемы не может быть пустым.');
     }
 
-    // Логируем входные данные для отладки
-    console.log(`Creating ticket for user ${id}:`, {
+    // Проверяем длину текста (максимум 500 символов)
+    if (issue.length > 500) {
+      console.error('Ошибка: слишком длинное описание проблемы', { issueLength: issue.length });
+      return ctx.reply('❌ Описание проблемы слишком длинное (максимум 500 символов).');
+    }
+
+    // Формируем данные для вставки
+    const ticketData = {
       user_id: id,
-      username: ctx.from.username || '',
+      username: typeof ctx.from.username === 'string' ? ctx.from.username : '',
       issue: issue,
       status: 'pending',
       created_at: Math.floor(Date.now() / 1000),
       updated_at: Math.floor(Date.now() / 1000)
-    });
+    };
 
+    // Логируем данные перед выполнением запроса
+    console.log(`Попытка создания тикета для user ${id}:`, ticketData);
+
+    // Выполняем транзакцию
     const transaction = db.transaction(() => {
       const insert = db.prepare('INSERT INTO support_tickets (user_id, username, issue, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
-      const result = insert.run(
-        id,
-        ctx.from.username || '', // Гарантируем строку
-        issue,
-        'pending',
-        Math.floor(Date.now() / 1000),
-        Math.floor(Date.now() / 1000)
-      );
+      // Проверяем типы данных перед вставкой
+      const params = [
+        ticketData.user_id, // number
+        ticketData.username, // string
+        ticketData.issue, // string
+        ticketData.status, // string
+        ticketData.created_at, // number
+        ticketData.updated_at // number
+      ];
+
+      // Дополнительная проверка типов
+      params.forEach((param, index) => {
+        const validTypes = ['number', 'string', 'bigint', 'object', 'undefined'];
+        if (!validTypes.includes(typeof param) || (typeof param === 'object' && param !== null)) {
+          throw new Error(`Недопустимый тип параметра ${index + 1}: ${typeof param}, значение: ${param}`);
+        }
+      });
+
+      const result = insert.run(...params);
 
       db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
         .run(result.lastInsertRowid, id, issue, false, Math.floor(Date.now() / 1000));
@@ -864,6 +924,8 @@ bot.on('message', async (ctx) => {
       ctx.session.waitingForSupport = false;
       logAction(id, `create_ticket_${ticketId}`, 'SUPPORT');
       await ctx.reply(`✅ Тикет #${ticketId} создан. Мы рассмотрим вашу проблему в ближайшее время! Используйте /tickets для просмотра статуса.`);
+      // Уведомление админам в канал
+      await ctx.telegram.sendMessage(WITHDRAW_CHANNEL, `📩 Новый тикет #${ticketId}\n👤 Пользователь: @${ticketData.username || 'без ника'} (ID: ${id})\n📜 Проблема: ${issue}`);
     } catch (e) {
       console.error('Ошибка создания тикета:', e);
       await ctx.reply('❌ Ошибка при создании тикета. Попробуйте снова.');
@@ -871,6 +933,7 @@ bot.on('message', async (ctx) => {
     return;
   }
 
+  // Обработка ответа на тикет (админ)
   if (ctx.session.waitingForTicketReply && ADMIN_IDS.includes(id)) {
     const ticketId = ctx.session.waitingForTicketReply;
     const ticket = db.prepare('SELECT user_id, issue, status FROM support_tickets WHERE id = ? AND status != "resolved"').get(ticketId);
@@ -913,20 +976,7 @@ bot.on('message', async (ctx) => {
     }
   }
 
-  if (ctx.session.broadcast && ADMIN_IDS.includes(id)) {
-    const users = db.prepare('SELECT id FROM users').all();
-    for (const u of users) {
-      try {
-        await bot.telegram.sendMessage(u.id, ctx.message.text);
-      } catch (e) {
-        console.error(`Ошибка рассылки пользователю ${u.id}:`, e);
-      }
-    }
-    ctx.session.broadcast = false;
-    logAction(id, 'broadcast', 'ADMIN');
-    return ctx.reply('✅ Рассылка завершена.');
-  }
-
+  // Обработка промокодов
   if (ctx.session.waitingForCode) {
     const code = ctx.message.text.trim();
     const promo = db.prepare('SELECT * FROM promo_codes WHERE code = ?').get(code);
@@ -954,12 +1004,35 @@ bot.on('message', async (ctx) => {
         .run(promo.activations_left - 1, JSON.stringify(usedBy), code);
     });
 
-    transaction();
-    ctx.session.waitingForCode = false;
-    logAction(id, `promo_${code}_${promo.reward}`, 'PROMO');
-    return ctx.reply(`✅ Промокод успешно активирован! +${promo.reward} звёзд`);
+    try {
+      transaction();
+      ctx.session.waitingForCode = false;
+      logAction(id, `promo_${code}_${promo.reward}`, 'PROMO');
+      return ctx.reply(`✅ Промокод успешно активирован! +${promo.reward} звёзд`);
+    } catch (e) {
+      console.error(`Ошибка активации промокода ${code}:`, e);
+      return ctx.reply('❌ Ошибка при активации промокода.');
+    }
   }
 
+  // Обработка админ-рассылки
+  if (ctx.session.broadcast && ADMIN_IDS.includes(id)) {
+    const users = db.prepare('SELECT id FROM users').all();
+    let successCount = 0;
+    for (const u of users) {
+      try {
+        await bot.telegram.sendMessage(u.id, ctx.message.text);
+        successCount++;
+      } catch (e) {
+        console.error(`Ошибка рассылки пользователю ${u.id}:`, e);
+      }
+    }
+    ctx.session.broadcast = false;
+    logAction(id, `broadcast_sent_${successCount}`, 'ADMIN');
+    return ctx.reply(`✅ Рассылка завершена. Отправлено ${successCount} пользователям.`);
+  }
+
+  // Обработка добавления промокода
   if (ctx.session.waitingForPromo && ADMIN_IDS.includes(id)) {
     const parts = ctx.message.text.trim().split(' ');
     if (parts.length !== 3) return ctx.reply('❌ Неверный формат. Попробуйте снова.');
@@ -973,12 +1046,20 @@ bot.on('message', async (ctx) => {
     const exists = db.prepare('SELECT code FROM promo_codes WHERE code = ?').get(code);
     if (exists) return ctx.reply('❌ Промокод уже существует.');
 
-    db.prepare('INSERT INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)')
-      .run(code, reward, activations, JSON.stringify([]));
+    const transaction = db.transaction(() => {
+      db.prepare('INSERT INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)')
+        .run(code, reward, activations, JSON.stringify([]));
+    });
 
-    ctx.session.waitingForPromo = false;
-    logAction(id, `add_promo_${code}`, 'ADMIN');
-    return ctx.reply(`✅ Промокод ${code} добавлен:\nНаграда: ${reward} звёзд\nОсталось активаций: ${activations}`);
+    try {
+      transaction();
+      ctx.session.waitingForPromo = false;
+      logAction(id, `add_promo_${code}`, 'ADMIN');
+      return ctx.reply(`✅ Промокод ${code} добавлен:\nНаграда: ${reward} звёзд\nОсталось активаций: ${activations}`);
+    } catch (e) {
+      console.error(`Ошибка добавления промокода ${code}:`, e);
+      return ctx.reply('❌ Ошибка при добавлении промокода.');
+    }
   }
 });
 
