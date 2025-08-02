@@ -113,24 +113,24 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'profile') {
-    const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(id).count;
-    const referredByUser = user.referred_by ? db.prepare('SELECT username FROM users WHERE id = ?').get(user.referred_by) : null;
-    const referrerName = referredByUser ? `@${referredByUser.username || 'без ника'}` : '—';
-    const displayName = ctx.from.first_name || '—';
+  const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(id).count;
+  const referredByUser = user.referred_by ? db.prepare('SELECT username FROM users WHERE id = ?').get(user.referred_by) : null;
+  const referrerName = referredByUser ? `@${referredByUser.username || 'без ника'}` : '—';
+  const displayName = ctx.from.first_name || '—';
 
-    const profileText =
-      `🌟 <b>Ваш профиль в MagnumTap</b> 🌟\n\n` +
-      `👤 Имя: <b>${displayName}</b>\n` +
-      `🆔 Telegram ID: <b>${user.id}</b>\n\n` +
-      `💫 Ваши звёзды: <b>${user.stars}</b>\n` +
-      `👥 Приглашено друзей: <b>${invited}</b>\n` +
-      `📣 Пригласил: <b>${referrerName}</b>\n\n` +
-      `🔥 Используйте звёзды для получения бонусов и участия в акциях!`;
+  const profileText =
+    `🌟 Ваш профиль в MagnumTap 🌟\n\n` +
+    `👤 Имя: ${displayName}\n` +
+    `🆔 Telegram ID: ${user.id}\n\n` +
+    `💫 Ваши звёзды: ${user.stars}\n` +
+    `👥 Приглашено друзей: ${invited}\n` +
+    `📣 Пригласил: ${referrerName}\n\n` +
+    `🔥 Используйте звёзды для получения бонусов и участия в акциях!`;
 
     return ctx.reply(profileText, Markup.inlineKeyboard([
-      [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]), { parse_mode: 'HTML' });
+    [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
+    [Markup.button.callback('🔙 Назад', 'back')]
+  ]));
   }
 
   if (action === 'withdraw_stars') {
