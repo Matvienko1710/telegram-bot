@@ -1,10 +1,29 @@
 const { Telegraf, Markup, session } = require('telegraf');
 const dayjs = require('dayjs');
+const db = require('./db');
 require('dotenv').config();
 
-const db = require('./db');
 const bot = new Telegraf(process.env.BOT_TOKEN);
-bot.use(session());
+
+// Настройка хранилища сессий в SQLite
+const sessionDB = {
+  get: async (key) => {
+    const row = db.prepare('SELECT data FROM sessions WHERE id = ?').get(key);
+    return row ? JSON.parse(row.data) : undefined;
+  },
+  save: async (key, value) => {
+    db.prepare('INSERT OR REPLACE INTO sessions (id, data) VALUES (?, ?)').run(key, JSON.stringify(value));
+  },
+  delete: async (key) => {
+    db.prepare('DELETE FROM sessions WHERE id = ?').run(key);
+  }
+};
+
+// Инициализация middleware сессий
+bot.use(session({
+  store: sessionDB,
+  getSessionKey: (ctx) => ctx.from && ctx.chat ? `${ctx.from.id}:${ctx.chat.id}` : undefined
+}));
 
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
@@ -13,7 +32,7 @@ const BOT_LINK = 'https://t.me/MagnumTapBot';
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot';
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
-const SCREENSHOT_LIMIT_SECONDS = 60; // Ограничение на повторную отправку скриншота
+const SCREENSHOT_LIMIT_SECONDS = 60;
 
 // Структурированное логирование
 function logAction(userId, action, category = 'GENERAL') {
@@ -24,7 +43,8 @@ function logAction(userId, action, category = 'GENERAL') {
 
 // Проверка подписки на каналы с кэшированием
 async function isUserSubscribed(ctx) {
-  if (ctx.session?.subscribed) return true;
+  ctx.session = ctx.session || {};
+  if (ctx.session.subscribed) return true;
 
   const memberStatuses = await Promise.all(
     REQUIRED_CHANNELS.map(async (channel) => {
@@ -96,6 +116,8 @@ bot.start(async (ctx) => {
   const username = ctx.from.username || '';
   const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
 
+  ctx.session = ctx.session || {};
+
   const subscribed = await isUserSubscribed(ctx);
   if (!subscribed) {
     return ctx.reply(
@@ -152,6 +174,8 @@ bot.on('callback_query', async (ctx) => {
 
   if (!user && action !== 'check_sub') return ctx.answerCbQuery('Пользователь не найден');
 
+  ctx.session = ctx.session || {};
+
   if (action === 'check_sub') {
     const subscribed = await isUserSubscribed(ctx);
     if (!subscribed) {
@@ -167,7 +191,6 @@ bot.on('callback_query', async (ctx) => {
     return ctx.answerCbQuery('✅ Подписка подтверждена');
   }
 
-  // Обработка заявок на вывод
   if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
     if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
 
@@ -270,9 +293,7 @@ bot.on('callback_query', async (ctx) => {
       `${TASK_BOT_LINK}\n\n` +
       `После проверки администратором вы получите 1.5 звезды.`;
 
-    ctx.session = ctx.session || {};
     ctx.session.waitingForTask = 'launch_bot';
-
     return ctx.editMessageText(text, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
@@ -287,8 +308,8 @@ bot.on('callback_query', async (ctx) => {
     return ctx.editMessageText(
       `📈 <b>Биржа MagnumCoin</b>\n\n` +
       `💱 Здесь в будущем вы сможете покупать и продавать MagnumCoin за звёзды.\n` +
-      `📊 Цена будет меняться в реальном времени, и вы сможете торговать, чтобы получать прибыль (или убыток!).\n\n` +
-      `🚧 Функция находится в разработке. Следите за обновлениями!`,
+      `📊 Цена будет меняться в реальном времени.\n\n` +
+      `🚧 Функция в разработке. Следите за обновлениями!`,
       { parse_mode: 'HTML', ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Назад', 'back')]]) }
     );
   }
@@ -310,7 +331,7 @@ bot.on('callback_query', async (ctx) => {
       `💫 Ваши звёзды: ${user.stars}\n` +
       `👥 Приглашено друзей: ${invited}\n` +
       `📣 Пригласил: ${referrerName}\n\n` +
-      `🔥 Используйте звёзды для получения бонусов и участия в акциях!`;
+      `🔥 Используйте звёзды для бонусов и акций!`;
 
     return ctx.reply(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
@@ -379,8 +400,7 @@ bot.on('callback_query', async (ctx) => {
 
   if (action === 'ref') {
     const link = `${BOT_LINK}?start=${ctx.from.id}`;
-    const refText = `📩 Приглашайте друзей и получайте бонусные звёзды за каждого приглашённого!\n\n` +
-                    `Чем больше друзей — тем больше наград и возможностей.\n\n` +
+    const refText = `📩 Приглашайте друзей и получайте 5 звёзд за каждого!\n\n` +
                     `Ваша реферальная ссылка:\n${link}`;
     return ctx.reply(refText, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
@@ -388,7 +408,6 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'enter_code') {
-    ctx.session = ctx.session || {};
     ctx.session.waitingForCode = true;
     return ctx.reply('💬 Введите промокод:');
   }
@@ -422,13 +441,11 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin_broadcast') {
-    ctx.session = ctx.session || {};
     ctx.session.broadcast = true;
     return ctx.reply('✏️ Введите текст рассылки:');
   }
 
   if (action === 'admin_addcode') {
-    ctx.session = ctx.session || {};
     ctx.session.waitingForPromo = true;
     return ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
   }
@@ -519,9 +536,37 @@ bot.on('callback_query', async (ctx) => {
     const screen = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE id = ? AND approved IS NULL').get(screenId);
     if (!screen) {
       await ctx.answerCbQuery('❌ Скриншот не найден или уже обработан', { show_alert: true });
-      return ctx.telegram.sendMessage(id, 'Нет новых скриншотов для проверки.', Markup.inlineKeyboard([
+      const pending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL ORDER BY created_at ASC').all();
+      if (pending.length === 0) {
+        await ctx.deleteMessage();
+        return ctx.reply('Нет новых скриншотов для проверки.', Markup.inlineKeyboard([
+          [Markup.button.callback('🔙 Назад', 'admin')]
+        ]));
+      }
+
+      const nextScr = pending[0];
+      const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(nextScr.user_id);
+      const nextTaskDescription = nextScr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
+
+      const inlineKeyboard = [
+        [
+          { text: '✅ Одобрить', callback_data: `approve_screen_${nextScr.id}` },
+          { text: '❌ Отклонить', callback_data: `reject_screen_${nextScr.id}` }
+        ],
+        [
+          Markup.button.callback('⬅️ Предыдущий', 'admin_check_screens_0'),
+          pending.length > 1 ? Markup.button.callback('Следующий ➡️', `admin_check_screens_1`) : Markup.button.callback('', '')
+        ].filter(button => button.text),
         [Markup.button.callback('🔙 Назад', 'admin')]
-      ]));
+      ];
+
+      return ctx.editMessageMedia({
+        type: 'photo',
+        media: nextScr.file_id,
+        caption: `📸 Скриншот 1/${pending.length} от @${nextUser?.username || 'пользователь'} (ID: ${nextScr.user_id})\n` +
+                 `Задание: ${nextTaskDescription}\n\n` +
+                 `Нажмите кнопку, чтобы одобрить или отклонить.`,
+      }, { reply_markup: { inline_keyboard: inlineKeyboard } });
     }
 
     const taskDescription = screen.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
@@ -546,7 +591,6 @@ bot.on('callback_query', async (ctx) => {
       await ctx.editMessageCaption(`✅ Скриншот для "${taskDescription}" ${isApprove ? 'одобрен' : 'отклонён'}.`);
       logAction(screen.user_id, `${isApprove ? 'approve' : 'reject'}_screen_${screen.task_type}_${screenId}`, 'SCREENSHOT');
 
-      // Показ следующего скриншота
       const pending = db.prepare('SELECT id, user_id, file_id, task_type FROM screenshots WHERE approved IS NULL ORDER BY created_at ASC').all();
       if (pending.length === 0) {
         await ctx.deleteMessage();
@@ -605,12 +649,14 @@ bot.on('photo', async (ctx) => {
   const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
   if (!user) return;
 
+  ctx.session = ctx.session || {};
+
   const subscribed = await isUserSubscribed(ctx);
   if (!subscribed) {
     return ctx.reply('❌ Вы не подписаны на все необходимые каналы. Подпишитесь и попробуйте снова.');
   }
 
-  const taskType = ctx.session?.waitingForTask === 'launch_bot' ? 'launch_bot' : 'subscribe_channel';
+  const taskType = ctx.session.waitingForTask === 'launch_bot' ? 'launch_bot' : 'subscribe_channel';
   const lastScreenshot = db.prepare('SELECT created_at FROM screenshots WHERE user_id = ? AND task_type = ? AND approved IS NULL ORDER BY created_at DESC LIMIT 1').get(id, taskType);
 
   if (lastScreenshot && (Date.now() / 1000 - lastScreenshot.created_at) < SCREENSHOT_LIMIT_SECONDS) {
@@ -637,8 +683,9 @@ bot.on('photo', async (ctx) => {
 
 bot.on('message', async (ctx) => {
   const id = ctx.from.id;
+  ctx.session = ctx.session || {};
 
-  if (ctx.session?.broadcast && ADMIN_IDS.includes(id)) {
+  if (ctx.session.broadcast && ADMIN_IDS.includes(id)) {
     const users = db.prepare('SELECT id FROM users').all();
     for (const u of users) {
       try {
@@ -652,7 +699,7 @@ bot.on('message', async (ctx) => {
     return ctx.reply('✅ Рассылка завершена.');
   }
 
-  if (ctx.session?.waitingForCode) {
+  if (ctx.session.waitingForCode) {
     const code = ctx.message.text.trim();
     const promo = db.prepare('SELECT * FROM promo_codes WHERE code = ?').get(code);
 
@@ -685,7 +732,7 @@ bot.on('message', async (ctx) => {
     return ctx.reply(`✅ Промокод успешно активирован! +${promo.reward} звёзд`);
   }
 
-  if (ctx.session?.waitingForPromo && ADMIN_IDS.includes(id)) {
+  if (ctx.session.waitingForPromo && ADMIN_IDS.includes(id)) {
     const parts = ctx.message.text.trim().split(' ');
     if (parts.length !== 3) return ctx.reply('❌ Неверный формат. Попробуйте снова.');
 
