@@ -85,15 +85,14 @@ bot.start(async (ctx) => {
   const subscribed = await isUserSubscribed(ctx);
   if (!subscribed) {
     return ctx.reply(
-      '🔒 Для доступа к функциям бота необходимо подписаться на каналы:',
-      Markup.inlineKeyboard([
-        ...REQUIRED_CHANNELS.map(channel => [
-          Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
-        ]),
-        [Markup.button.callback('✅ Я подписался', 'check_sub')]
-      ])
-    );
-  }
+  '🔒 Для доступа к функциям бота необходимо подписаться на каналы:',
+  Markup.inlineKeyboard([
+    ...REQUIRED_CHANNELS.map(channel => [
+      Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
+    ]),
+    [Markup.button.callback('✅ Я подписался', 'check_sub')]
+  ])
+);
 
   const existing = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!existing) {
