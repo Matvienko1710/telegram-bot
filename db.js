@@ -83,6 +83,31 @@ db.prepare(`
   )
 `).run();
 
+// Таблица тикетов поддержки
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS support_tickets (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER NOT NULL,
+    username TEXT,
+    issue TEXT NOT NULL,
+    status TEXT DEFAULT 'pending', -- pending, in_progress, resolved
+    created_at INTEGER DEFAULT (strftime('%s', 'now')),
+    updated_at INTEGER DEFAULT (strftime('%s', 'now'))
+  )
+`).run();
+
+// Таблица сообщений тикетов
+db.prepare(`
+  CREATE TABLE IF NOT EXISTS ticket_messages (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    ticket_id INTEGER NOT NULL,
+    user_id INTEGER NOT NULL,
+    message TEXT NOT NULL,
+    is_admin BOOLEAN DEFAULT FALSE,
+    created_at INTEGER DEFAULT (strftime('%s', 'now'))
+  )
+`).run();
+
 // Очистка устаревших отклонённых скриншотов (старше 7 дней)
 const sevenDaysAgo = Math.floor(Date.now() / 1000) - 7 * 24 * 60 * 60;
 db.prepare('DELETE FROM screenshots WHERE approved = 0 AND created_at < ?').run(sevenDaysAgo);
