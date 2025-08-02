@@ -366,22 +366,19 @@ bot.on('photo', async (ctx) => {
   const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
   if (!user) return; // если нет в базе - игнорируем
 
-  // Проверим, что пользователь ожидает отправить скрин (опционально можно убрать проверку)
-
-  // Сохраняем файл фото в БД для проверки админом
   const photoArray = ctx.message.photo;
-  const fileId = photoArray[photoArray.length - 1].file_id; // берем самый большой размер
-
-  // Сохраняем в таблицу screenshots:
-  // Таблица должна быть создана заранее, структура примерно:
-  // id INTEGER PRIMARY KEY AUTOINCREMENT
-  // user_id INTEGER
-  // file_id TEXT
-  // approved INTEGER NULL DEFAULT NULL (null - не рассмотрен, 1 - одобрен, 0 - отклонён)
+  const fileId = photoArray[photoArray.length - 1].file_id;
 
   db.prepare('INSERT INTO screenshots (user_id, file_id, approved) VALUES (?, ?, NULL)').run(id, fileId);
 
   await ctx.reply('✅ Скриншот получен и отправлен на проверку администратору. Ждите результат.');
+
+  // Удаляем сообщение пользователя с фото
+  try {
+    await ctx.deleteMessage();
+  } catch (e) {
+    console.log('Ошибка удаления сообщения с фото:', e.message);
+  }
 });
 // --- КОНЕЦ ИЗМЕНЕНИЯ ---
 
