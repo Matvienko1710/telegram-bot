@@ -29,6 +29,23 @@ function hasColumn(tableName, columnName) {
   return pragma.some(col => col.name === columnName);
 }
 
+// Добавляем колонки для ежедневных заданий, если их нет
+function migrateDailyTasksColumns() {
+  const columnsToAdd = [
+    { name: 'daily_task_date', type: 'TEXT', defaultValue: 'NULL' },
+    { name: 'daily_task_type', type: 'TEXT', defaultValue: 'NULL' },
+    { name: 'daily_task_progress', type: 'INTEGER', defaultValue: 0 },
+    { name: 'daily_task_completed', type: 'INTEGER', defaultValue: 0 },
+  ];
+
+  columnsToAdd.forEach(col => {
+    if (!hasColumn('users', col.name)) {
+      db.prepare(`ALTER TABLE users ADD COLUMN ${col.name} ${col.type} DEFAULT ${col.defaultValue}`).run();
+      console.log(`Добавлена колонка ${col.name} в таблицу users`);
+    }
+  });
+}
+
 // Миграция таблицы promo_codes
 function migratePromoCodesTable() {
   const tableExists = db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='promo_codes'").get();
@@ -80,6 +97,7 @@ function migratePromoCodesTable() {
   console.log('Миграция promo_codes выполнена');
 }
 
+migrateDailyTasksColumns();
 migratePromoCodesTable();
 
 module.exports = db;
