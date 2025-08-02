@@ -5,29 +5,32 @@ require('dotenv').config();
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Проверка структуры таблицы support_tickets
+// Проверка структуры таблицы users (для примера, без support_tickets)
 try {
-  const tableInfo = db.prepare('PRAGMA table_info(support_tickets)').all();
+  const tableInfo = db.prepare('PRAGMA table_info(users)').all();
   const expectedColumns = [
     { name: 'id', type: 'INTEGER', notnull: 0, pk: 1 },
-    { name: 'user_id', type: 'INTEGER', notnull: 1 },
     { name: 'username', type: 'TEXT', notnull: 0 },
-    { name: 'issue', type: 'TEXT', notnull: 1 },
-    { name: 'status', type: 'TEXT', notnull: 0, dflt_value: "'pending'" },
-    { name: 'created_at', type: 'INTEGER', notnull: 0 },
-    { name: 'updated_at', type: 'INTEGER', notnull: 0 }
+    { name: 'stars', type: 'INTEGER', notnull: 0, dflt_value: '0' },
+    { name: 'last_farm', type: 'INTEGER', notnull: 0, dflt_value: '0' },
+    { name: 'last_bonus', type: 'TEXT', notnull: 0, dflt_value: 'NULL' },
+    { name: 'referred_by', type: 'INTEGER', notnull: 0 },
+    { name: 'daily_task_date', type: 'TEXT', notnull: 0, dflt_value: 'NULL' },
+    { name: 'daily_task_type', type: 'TEXT', notnull: 0, dflt_value: 'NULL' },
+    { name: 'daily_task_progress', type: 'INTEGER', notnull: 0, dflt_value: '0' },
+    { name: 'daily_task_completed', type: 'INTEGER', notnull: 0, dflt_value: '0' }
   ];
   const isValid = expectedColumns.every(col => {
     const found = tableInfo.find(t => t.name === col.name);
     return found && found.type === col.type && found.notnull === col.notnull && (col.pk ? found.pk === col.pk : true);
   });
   if (!isValid) {
-    console.error('Ошибка: структура таблицы support_tickets не соответствует ожиданиям', tableInfo);
+    console.error('Ошибка: структура таблицы users не соответствует ожиданиям', tableInfo);
   } else {
-    console.log('Структура таблицы support_tickets корректна');
+    console.log('Структура таблицы users корректна');
   }
 } catch (e) {
-  console.error('Ошибка проверки структуры таблицы support_tickets:', e);
+  console.error('Ошибка проверки структуры таблицы users:', e);
 }
 
 // Настройка хранилища сессий в SQLite
@@ -151,6 +154,26 @@ bot.command('backup', (ctx) => {
   }
 });
 
+// Команда /support
+bot.command('support', async (ctx) => {
+  const id = ctx.from.id;
+  ctx.session = ctx.session || {};
+  const subscribed = await isUserSubscribed(ctx);
+  if (!subscribed) {
+    return ctx.reply(
+      '🔒 Для обращения в поддержку подпишитесь на каналы:',
+      Markup.inlineKeyboard([
+        ...REQUIRED_CHANNELS.map(channel => [
+          Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
+        ]),
+        [Markup.button.callback('✅ Я подписался', 'check_sub')]
+      ])
+    );
+  }
+  ctx.session.waitingForSupport = true;
+  return ctx.reply('📞 Опишите вашу проблему, и мы свяжемся с вами через @magnumsupports.');
+});
+
 bot.start(async (ctx) => {
   const id = ctx.from.id;
   const username = ctx.from.username || '';
@@ -206,37 +229,6 @@ bot.start(async (ctx) => {
   await sendMainMenu(ctx);
 });
 
-// Команда /support
-bot.command('support', async (ctx) => {
-  ctx.session = ctx.session || {};
-  ctx.session.waitingForSupport = true;
-  return ctx.reply('📞 Опишите вашу проблему, и мы постараемся помочь как можно скорее!');
-});
-
-// Команда /tickets
-bot.command('tickets', async (ctx) => {
-  const id = ctx.from.id;
-  const tickets = db.prepare('SELECT id, issue, status, created_at FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC').all(Number(id));
-
-  if (tickets.length === 0) {
-    return ctx.reply('У вас нет активных тикетов.', Markup.inlineKeyboard([
-      [Markup.button.callback('📞 Создать тикет', 'create_support')],
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
-  }
-
-  const text = tickets.map(t => {
-    const created = dayjs.unix(t.created_at).format('DD.MM.YYYY HH:mm');
-    const status = t.status === 'pending' ? '⏳ Ожидает' : t.status === 'in_progress' ? '🔄 В обработке' : '✅ Решён';
-    return `📩 Тикет #${t.id}\nПроблема: ${t.issue}\nСтатус: ${status}\nСоздан: ${created}`;
-  }).join('\n\n');
-
-  return ctx.reply(`📋 Ваши тикеты:\n\n${text}`, Markup.inlineKeyboard([
-    [Markup.button.callback('📞 Создать тикет', 'create_support')],
-    [Markup.button.callback('🔙 Назад', 'back')]
-  ]));
-});
-
 bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
   const now = Date.now();
@@ -260,155 +252,6 @@ bot.on('callback_query', async (ctx) => {
     }
     await sendMainMenu(ctx);
     return ctx.answerCbQuery('✅ Подписка подтверждена');
-  }
-
-  if (action === 'create_support') {
-    console.log(`User ${id} clicked create_support, session:`, ctx.session);
-    ctx.session.waitingForSupport = true;
-    return ctx.editMessageText('📞 Опишите вашу проблему, и мы постараемся помочь как можно скорее!', Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
-  }
-
-  if (action.startsWith('support_ticket_')) {
-    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
-
-    const currentIndex = action === 'support_ticket' ? 0 : parseInt(action.split('_')[2]) || 0;
-    const tickets = db.prepare('SELECT id, user_id, username, issue, status, created_at FROM support_tickets WHERE status != "resolved" ORDER BY created_at ASC').all();
-
-    if (tickets.length === 0) {
-      await ctx.deleteMessage();
-      return ctx.reply('Нет активных тикетов для обработки.', Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Назад', 'admin')]
-      ]));
-    }
-
-    const index = Math.max(0, Math.min(currentIndex, tickets.length - 1));
-    const ticket = tickets[index];
-    const messages = db.prepare('SELECT message, is_admin, created_at FROM ticket_messages WHERE ticket_id = ? ORDER BY created_at ASC').all(ticket.id);
-    const created = dayjs.unix(ticket.created_at).format('DD.MM.YYYY HH:mm');
-    const status = ticket.status === 'pending' ? '⏳ Ожидает' : '🔄 В обработке';
-
-    const messageHistory = messages.length > 0
-      ? messages.map(m => `${m.is_admin ? '🛠 Админ' : '👤 Пользователь'} (${dayjs.unix(m.created_at).format('DD.MM.YYYY HH:mm')}): ${m.message}`).join('\n')
-      : 'Нет сообщений';
-
-    logAction(id, `view_ticket_${ticket.id}`, 'SUPPORT');
-
-    const inlineKeyboard = [
-      [
-        { text: '📝 Ответить', callback_data: `reply_ticket_${ticket.id}` },
-        { text: '✅ Решить', callback_data: `resolve_ticket_${ticket.id}` }
-      ],
-      [
-        index > 0 ? Markup.button.callback('⬅️ Предыдущий', `support_ticket_${index - 1}`) : Markup.button.callback('', ''),
-        index < tickets.length - 1 ? Markup.button.callback('Следующий ➡️', `support_ticket_${index + 1}`) : Markup.button.callback('', '')
-      ].filter(button => button.text),
-      [Markup.button.callback('🔙 Назад', 'admin')]
-    ];
-
-    return ctx.editMessageText(
-      `📩 Тикет #${ticket.id} (${index + 1}/${tickets.length})\n` +
-      `👤 Пользователь: @${ticket.username || 'без ника'} (ID: ${ticket.user_id})\n` +
-      `📜 Проблема: ${ticket.issue}\n` +
-      `🔄 Статус: ${status}\n` +
-      `📅 Создан: ${created}\n\n` +
-      `💬 История переписки:\n${messageHistory}`,
-      { reply_markup: { inline_keyboard: inlineKeyboard } }
-    );
-  }
-
-  if (action.startsWith('reply_ticket_')) {
-    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
-
-    const ticketId = parseInt(action.split('_')[2]);
-    if (isNaN(ticketId)) return ctx.answerCbQuery('❌ Неверный ID тикета');
-
-    ctx.session.waitingForTicketReply = ticketId;
-    return ctx.editMessageText('✏️ Введите ответ для тикета:', Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Назад', `support_ticket_0`)]
-    ]));
-  }
-
-  if (action.startsWith('resolve_ticket_')) {
-    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
-
-    const ticketId = parseInt(action.split('_')[2]);
-    if (isNaN(ticketId)) return ctx.answerCbQuery('❌ Неверный ID тикета');
-
-    const ticket = db.prepare('SELECT user_id, issue FROM support_tickets WHERE id = ? AND status != "resolved"').get(ticketId);
-    if (!ticket) return ctx.answerCbQuery('❌ Тикет не найден или уже решён');
-
-    const transaction = db.transaction(() => {
-      db.prepare('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?').run('resolved', Math.floor(Date.now() / 1000).toString(), ticketId);
-    });
-
-    try {
-      transaction();
-      await ctx.telegram.sendMessage(ticket.user_id, `✅ Тикет #${ticketId} (${ticket.issue}) решён. Спасибо за обращение!`);
-      logAction(id, `resolve_ticket_${ticketId}`, 'SUPPORT');
-
-      const tickets = db.prepare('SELECT id FROM support_tickets WHERE status != "resolved" ORDER BY created_at ASC').all();
-      if (tickets.length === 0) {
-        await ctx.deleteMessage();
-        return ctx.reply('Нет активных тикетов для обработки.', Markup.inlineKeyboard([
-          [Markup.button.callback('🔙 Назад', 'admin')]
-        ]));
-      }
-
-      return ctx.editMessageText('✅ Тикет решён. Перейти к следующему?', Markup.inlineKeyboard([
-        [Markup.button.callback('▶️ Следующий тикет', 'support_ticket_0')],
-        [Markup.button.callback('🔙 Назад', 'admin')]
-      ]));
-    } catch (e) {
-      console.error(`Ошибка обработки тикета ID=${ticketId}:`, e);
-      return ctx.answerCbQuery('❌ Ошибка при обработке тикета', { show_alert: true });
-    }
-  }
-
-  if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
-    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
-
-    const withdrawId = parseInt(action.split('_')[2]);
-    if (isNaN(withdrawId)) return ctx.answerCbQuery('❌ Неверный ID заявки');
-
-    const withdraw = db.prepare('SELECT id, user_id, username, amount, channel_message_id FROM withdraws WHERE id = ?').get(withdrawId);
-    if (!withdraw) return ctx.answerCbQuery('❌ Заявка не найдена');
-
-    const isApprove = action.startsWith('approve_withdraw_');
-    const newStatus = isApprove ? 'approved' : 'rejected';
-
-    const transaction = db.transaction(() => {
-      db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
-      if (!isApprove) {
-        db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(withdraw.amount, Number(withdraw.user_id));
-      }
-    });
-
-    try {
-      transaction();
-      await ctx.telegram.editMessageText(
-        WITHDRAW_CHANNEL,
-        withdraw.channel_message_id,
-        null,
-        `✅ Запрос на вывод №${withdrawId}\n\n` +
-        `👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${withdraw.user_id}\n` +
-        `💫 Количество: ${withdraw.amount}⭐️\n\n` +
-        `🔄 Статус: ${newStatus}`,
-        { reply_markup: { inline_keyboard: [] } }
-      );
-
-      const notifyText = isApprove
-        ? `✅ Ваша заявка на вывод ${withdraw.amount} ⭐ одобрена!`
-        : `❌ Ваша заявка на вывод ${withdraw.amount} ⭐ отклонена.`;
-
-      await ctx.telegram.sendMessage(withdraw.user_id, notifyText);
-      logAction(withdraw.user_id, `withdraw_${newStatus}_${withdrawId}`, 'WITHDRAW');
-      await ctx.answerCbQuery('Обработано');
-    } catch (e) {
-      console.error('Ошибка обработки заявки:', e);
-      await ctx.answerCbQuery('❌ Ошибка при обработке заявки', { show_alert: true });
-    }
   }
 
   if (action === 'farm') {
@@ -510,7 +353,7 @@ bot.on('callback_query', async (ctx) => {
 
     return ctx.reply(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
-      [Markup.button.callback('📞 Поддержка', 'create_support')],
+      [Markup.button.callback('📞 Поддержка', 'support')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -599,7 +442,6 @@ bot.on('callback_query', async (ctx) => {
       [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
       [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
       [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
-      [Markup.button.callback('📩 Тикеты поддержки', 'support_ticket')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -698,7 +540,6 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
         [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
-        [Markup.button.callback('📩 Тикеты поддержки', 'support_ticket')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -810,7 +651,6 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
         [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
-        [Markup.button.callback('📩 Тикеты поддержки', 'support_ticket')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -883,9 +723,8 @@ bot.on('message', async (ctx) => {
     );
   }
 
-  // Проверяем, ожидается ли сообщение для поддержки
+  // Обработка поддержки
   if (ctx.session.waitingForSupport) {
-    // Проверяем наличие текста в сообщении
     if (!ctx.message || !ctx.message.text || typeof ctx.message.text !== 'string') {
       console.error('Ошибка: сообщение не содержит текст', { message: ctx.message });
       return ctx.reply('❌ Пожалуйста, опишите проблему текстом (без стикеров, фото или других данных).');
@@ -897,117 +736,24 @@ bot.on('message', async (ctx) => {
       return ctx.reply('❌ Описание проблемы не может быть пустым.');
     }
 
-    // Проверяем длину текста (максимум 500 символов)
     if (issue.length > 500) {
       console.error('Ошибка: слишком длинное описание проблемы', { issueLength: issue.length });
       return ctx.reply('❌ Описание проблемы слишком длинное (максимум 500 символов).');
     }
 
-    // Формируем данные для вставки
-    const ticketData = {
-      user_id: Number(id), // Преобразуем в number, так как SQLite ожидает INTEGER
-      username: typeof ctx.from.username === 'string' ? ctx.from.username : '',
-      issue: issue,
-      status: 'pending',
-      created_at: Math.floor(Date.now() / 1000).toString(), // Строки для дат
-      updated_at: Math.floor(Date.now() / 1000).toString() // Строки для дат
-    };
-
-    // Логируем данные и их типы перед выполнением запроса
-    console.log(`Попытка создания тикета для user ${id}:`, {
-      user_id: { value: ticketData.user_id, type: typeof ticketData.user_id },
-      username: { value: ticketData.username, type: typeof ticketData.username },
-      issue: { value: ticketData.issue, type: typeof ticketData.issue },
-      status: { value: ticketData.status, type: typeof ticketData.status },
-      created_at: { value: ticketData.created_at, type: typeof ticketData.created_at },
-      updated_at: { value: ticketData.updated_at, type: typeof ticketData.updated_at }
-    });
-
-    // Дополнительная проверка параметров
-    const params = [
-      ticketData.user_id,
-      ticketData.username,
-      ticketData.issue,
-      ticketData.status,
-      ticketData.created_at,
-      ticketData.updated_at
-    ];
-    const invalidParam = params.find((p, i) => {
-      const valid = p === null || typeof p === 'string' || typeof p === 'number' || Buffer.isBuffer(p);
-      if (!valid) console.error(`Недопустимый параметр ${i}:`, p, typeof p);
-      return !valid;
-    });
-    if (invalidParam) {
-      console.error('Ошибка: недопустимый тип параметра', { invalidParam, type: typeof invalidParam });
-      return ctx.reply('❌ Ошибка при создании тикета: неверный формат данных.');
-    }
-
-    // Выполняем транзакцию
-    const transaction = db.transaction(() => {
-      const insert = db.prepare('INSERT INTO support_tickets (user_id, username, issue, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
-      const result = insert.run(...params);
-
-      db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(result.lastInsertRowid, Number(id), ticketData.issue, false, ticketData.created_at);
-      return result.lastInsertRowid;
-    });
-
     try {
-      const ticketId = transaction();
+      await ctx.telegram.sendMessage(
+        SUPPORT_USERNAME,
+        `📩 Новый запрос в поддержку\n👤 Пользователь: @${ctx.from.username || 'без ника'} (ID: ${id})\n📜 Проблема: ${issue}`
+      );
       ctx.session.waitingForSupport = false;
-      logAction(id, `create_ticket_${ticketId}`, 'SUPPORT');
-      await ctx.reply(`✅ Тикет #${ticketId} создан. Мы рассмотрим вашу проблему в ближайшее время! Используйте /tickets для просмотра статуса.`);
-      // Уведомление админам в канал
-      await ctx.telegram.sendMessage(WITHDRAW_CHANNEL, `📩 Новый тикет #${ticketId}\n👤 Пользователь: @${ticketData.username || 'без ника'} (ID: ${id})\n📜 Проблема: ${issue}`);
+      logAction(id, 'create_support', 'SUPPORT');
+      await ctx.reply(`✅ Ваш запрос отправлен в @magnumsupports. Мы свяжемся с вами в ближайшее время!`);
     } catch (e) {
-      console.error('Ошибка создания тикета:', e, { params: ticketData, context: JSON.stringify(ctx, null, 2) });
-      await ctx.reply('❌ Ошибка при создании тикета. Попробуйте снова.');
+      console.error('Ошибка отправки запроса в поддержку:', e, { issue, user_id: id });
+      await ctx.reply('❌ Ошибка при отправке запроса. Попробуйте снова.');
     }
     return;
-  }
-
-  // Обработка ответа на тикет (админ)
-  if (ctx.session.waitingForTicketReply && ADMIN_IDS.includes(id)) {
-    const ticketId = ctx.session.waitingForTicketReply;
-    const ticket = db.prepare('SELECT user_id, issue, status FROM support_tickets WHERE id = ? AND status != "resolved"').get(ticketId);
-    if (!ticket) {
-      ctx.session.waitingForTicketReply = null;
-      return ctx.reply('❌ Тикет не найден или уже решён.', Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Назад', 'support_ticket_0')]
-      ]));
-    }
-
-    if (!ctx.message.text || typeof ctx.message.text !== 'string') {
-      return ctx.reply('❌ Пожалуйста, введите текст ответа.');
-    }
-
-    const message = ctx.message.text.trim();
-    if (message.length === 0) {
-      return ctx.reply('❌ Ответ не может быть пустым.');
-    }
-
-    const transaction = db.transaction(() => {
-      db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(ticketId, Number(id), message, true, Math.floor(Date.now() / 1000).toString());
-      db.prepare('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?')
-        .run('in_progress', Math.floor(Date.now() / 1000).toString(), ticketId);
-    });
-
-    try {
-      transaction();
-      await ctx.telegram.sendMessage(ticket.user_id, `📩 Ответ по тикету #${ticketId} (${ticket.issue}):\n${message}`);
-      logAction(id, `reply_ticket_${ticketId}`, 'SUPPORT');
-      ctx.session.waitingForTicketReply = null;
-      return ctx.reply('✅ Ответ отправлен пользователю.', Markup.inlineKeyboard([
-        [Markup.button.callback('▶️ Следующий тикет', 'support_ticket_0')],
-        [Markup.button.callback('🔙 Назад', 'admin')]
-      ]));
-    } catch (e) {
-      console.error(`Ошибка отправки ответа на тикет ID=${ticketId}:`, e);
-      return ctx.reply('❌ Ошибка при отправке ответа.', Markup.inlineKeyboard([
-        [Markup.button.callback('🔙 Назад', 'support_ticket_0')]
-      ]));
-    }
   }
 
   // Обработка промокодов
