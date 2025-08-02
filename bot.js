@@ -243,11 +243,14 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'ref') {
-    const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
-    return ctx.reply(`📩 Ваша реферальная ссылка:\n\n${link}`, Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
-  }
+  const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
+  const refText = `📩 Приглашайте друзей и получайте бонусные звёзды за каждого приглашённого!\n\n` +
+                  `Чем больше друзей — тем больше наград и возможностей.\n\n` +
+                  `Ваша реферальная ссылка:\n${link}`;
+  return ctx.reply(refText, Markup.inlineKeyboard([
+    [Markup.button.callback('🔙 Назад', 'back')]
+  ]));
+}
 
   if (action === 'enter_code') {
     ctx.session = ctx.session || {};
