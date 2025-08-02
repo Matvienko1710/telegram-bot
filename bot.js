@@ -148,7 +148,7 @@ if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw
 
   db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
 
-  await ctx.telegram.editMessageText('@magnumtap_withdraw', withdraw.channel_message_id, null, 
+  await ctx.telegram.editMessageText('@magnumwithdraw', withdraw.channel_message_id, null, 
     `✅ Запрос на вывод №${withdrawId}
 
 👤 Пользователь: @${withdraw.username || 'Без ника'} | ID ${withdraw.user_id}
