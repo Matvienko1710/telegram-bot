@@ -33,6 +33,33 @@ try {
   console.error('Ошибка проверки структуры таблицы users:', e);
 }
 
+// Проверка и создание таблицы support_tickets
+try {
+  db.prepare(`
+    CREATE TABLE IF NOT EXISTS support_tickets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      username TEXT,
+      issue TEXT NOT NULL,
+      type TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'open',
+      created_at INTEGER NOT NULL,
+      channel_message_id INTEGER
+    )
+  `).run();
+  console.log('Таблица support_tickets готова');
+} catch (e) {
+  console.error('Ошибка создания таблицы support_tickets:', e);
+}
+
+// Очистка старых сессий (старше 7 дней)
+try {
+  db.prepare('DELETE FROM sessions WHERE strftime("%s", "now") - json_extract(data, "$.last_access") > 604800').run();
+  console.log('Устаревшие сессии удалены');
+} catch (e) {
+  console.error('Ошибка очистки сессий:', e);
+}
+
 // Настройка хранилища сессий
 const sessionDB = {
   get: (key) => {
@@ -40,6 +67,7 @@ const sessionDB = {
     return row ? JSON.parse(row.data) : undefined;
   },
   set: (key, value) => {
+    value.last_access = Math.floor(Date.now() / 1000);
     db.prepare('INSERT OR REPLACE INTO sessions (id, data) VALUES (?, ?)').run(key, JSON.stringify(value));
   },
   delete: (key) => {
@@ -54,7 +82,8 @@ bot.use(session({
 
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
-const SUPPORT_USERNAME = '@magnumsupported';
+const SUPPORT_USERNAME = '@magnumsupported'; // Юзернейм для отправки сообщений в канал
+const SUPPORT_LINK = 'https://t.me/magnumsupported'; // Ссылка для отображения в сообщениях
 const BOT_LINK = 'https://t.me/firestars_rbot';
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot';
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
@@ -69,7 +98,10 @@ function logAction(userId, action, category = 'GENERAL') {
 
 async function isUserSubscribed(ctx) {
   ctx.session = ctx.session || {};
-  if (ctx.session.subscribed) return true;
+  if (ctx.session.subscribed) {
+    logAction(ctx.from.id, 'subscription_cached', 'SUBSCRIPTION');
+    return true;
+  }
 
   const memberStatuses = await Promise.all(
     REQUIRED_CHANNELS.map(async (channel) => {
@@ -78,13 +110,17 @@ async function isUserSubscribed(ctx) {
         return ['member', 'administrator', 'creator'].includes(member.status);
       } catch (e) {
         console.error(`Ошибка проверки подписки на ${channel}:`, e);
+        logAction(ctx.from.id, `subscription_check_error_${channel}`, 'SUBSCRIPTION');
         return false;
       }
     })
   );
 
   const subscribed = memberStatuses.every(status => status);
-  if (subscribed) ctx.session.subscribed = true;
+  if (subscribed) {
+    ctx.session.subscribed = true;
+    logAction(ctx.from.id, 'subscription_confirmed', 'SUBSCRIPTION');
+  }
   return subscribed;
 }
 
@@ -114,7 +150,43 @@ async function sendWithdrawRequest(ctx, userId, username, amount) {
     logAction(userId, `withdraw_request_${amount}`, 'WITHDRAW');
   } catch (e) {
     console.error('Ошибка отправки заявки на вывод:', e);
+    logAction(userId, `withdraw_request_error_${amount}`, 'WITHDRAW');
     throw new Error('Не удалось отправить заявку на вывод');
+  }
+}
+
+async function sendSupportTicket(ctx, userId, username, issue, type) {
+  const transaction = db.transaction(() => {
+    const insert = db.prepare(`
+      INSERT INTO support_tickets (user_id, username, issue, type, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const result = insert.run(Number(userId), username || '', issue, type, 'open', Math.floor(Date.now() / 1000));
+    return result.lastInsertRowid;
+  });
+
+  try {
+    const ticketId = transaction();
+    const message = await ctx.telegram.sendMessage(
+      SUPPORT_USERNAME,
+      `📩 Новый тикет #${ticketId} (${type})\n👤 Пользователь: @${username || 'без ника'} (ID: ${userId})\n📜 Проблема: ${issue}`,
+      {
+        reply_markup: {
+          inline_keyboard: [[
+            { text: '📝 Ответить', callback_data: `admin_reply_ticket_${ticketId}` },
+            { text: '❌ Закрыть', callback_data: `admin_close_ticket_${ticketId}` }
+          ]]
+        }
+      }
+    );
+
+    db.prepare('UPDATE support_tickets SET channel_message_id = ? WHERE id = ?').run(message.message_id, ticketId);
+    logAction(userId, `create_ticket_${type}_${ticketId}`, 'SUPPORT');
+    return ticketId;
+  } catch (e) {
+    console.error('Ошибка отправки тикета в поддержку:', e);
+    logAction(userId, `ticket_error_${type}_${e.message}`, 'SUPPORT');
+    throw new Error('Не удалось отправить тикет в поддержку');
   }
 }
 
@@ -131,9 +203,68 @@ function sendMainMenu(ctx) {
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
     [Markup.button.callback('📋 Задания', 'daily_tasks')],
     [Markup.button.callback('💰 Купить премиум', 'buy_premium')],
+    [Markup.button.callback('💸 Баланс Stars', 'stars_balance')],
     ADMIN_IDS.includes(ctx.from.id) ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
   ]));
 }
+
+// Команда /start
+bot.command('start', async (ctx) => {
+  const id = ctx.from.id;
+  const username = ctx.from.username || '';
+  const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
+
+  logAction(id, 'start_command', 'USER');
+  ctx.session = ctx.session || {};
+
+  try {
+    const subscribed = await isUserSubscribed(ctx);
+    if (!subscribed) {
+      logAction(id, 'start_not_subscribed', 'USER');
+      return ctx.reply(
+        '🔒 Для доступа к функциям бота необходимо подписаться на каналы:',
+        Markup.inlineKeyboard([
+          ...REQUIRED_CHANNELS.map(channel => [
+            Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
+          ]),
+          [Markup.button.callback('✅ Я подписался', 'check_sub')]
+        ])
+      );
+    }
+
+    const transaction = db.transaction(() => {
+      const existing = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
+      if (!existing) {
+        db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(Number(id), username, referral ? Number(referral) : null);
+        if (referral && referral !== id) {
+          db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(Number(referral));
+          logAction(referral, `referral_reward_${id}`, 'REFERRAL');
+        }
+        logAction(id, 'register', 'USER');
+      } else if (existing.username !== username) {
+        db.prepare('UPDATE users SET username = ? WHERE id = ?').run(username, Number(id));
+        logAction(id, 'update_username', 'USER');
+      }
+    });
+
+    transaction();
+    if (referral && referral !== id) {
+      try {
+        await ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +5 звёзд`);
+      } catch (e) {
+        console.error(`Ошибка уведомления реферала ${referral}:`, e);
+        logAction(id, `referral_notify_error_${referral}`, 'REFERRAL');
+      }
+    }
+
+    await sendMainMenu(ctx);
+    logAction(id, 'start_success', 'USER');
+  } catch (e) {
+    console.error(`Ошибка в /start для пользователя ${id}:`, e);
+    logAction(id, `start_error_${e.message}`, 'ERROR');
+    await ctx.reply(`❌ Ошибка при запуске бота. Попробуйте снова или обратитесь в ${SUPPORT_LINK}.`);
+  }
+});
 
 // Команда /backup
 bot.command('backup', (ctx) => {
@@ -146,7 +277,7 @@ bot.command('backup', (ctx) => {
     logAction(ctx.from.id, 'backup_database', 'ADMIN');
   } catch (e) {
     console.error('Ошибка создания бэкапа:', e);
-    ctx.reply('❌ Ошибка при создания бэкапа базы данных.');
+    ctx.reply('❌ Ошибка при создании бэкапа базы данных.');
   }
 });
 
@@ -167,7 +298,7 @@ bot.command('support', async (ctx) => {
     );
   }
   ctx.session.waitingForSupport = true;
-  return ctx.reply('📞 Опишите вашу проблему, и мы свяжемся с вами через @magnumsupports.');
+  return ctx.reply(`📞 Опишите вашу проблему, и мы свяжемся с вами через ${SUPPORT_LINK}.`);
 });
 
 // Команда /paysupport
@@ -187,7 +318,7 @@ bot.command('paysupport', async (ctx) => {
     );
   }
   ctx.session.waitingForPaySupport = true;
-  return ctx.reply('📞 Опишите проблему с оплатой Telegram Stars, и мы свяжемся с вами через @magnumsupports.');
+  return ctx.reply(`📞 Опишите проблему с оплатой Telegram Stars, и мы свяжемся с вами через ${SUPPORT_LINK}.`);
 });
 
 // Команда /buy
@@ -220,7 +351,57 @@ bot.command('buy', async (ctx) => {
     logAction(id, 'send_invoice_premium_badge', 'STARS');
   } catch (e) {
     console.error('Ошибка отправки инвойса:', e);
-    ctx.reply('❌ Ошибка при создании платежа. Попробуйте снова.');
+    logAction(id, `buy_error_${e.message}`, 'STARS');
+    ctx.reply(`❌ Ошибка при создании платежа. Попробуйте снова или обратитесь в ${SUPPORT_LINK} через /paysupport.`);
+  }
+});
+
+// Команда /stars_balance
+bot.command('stars_balance', async (ctx) => {
+  const id = ctx.from.id;
+  ctx.session = ctx.session || {};
+  const subscribed = await isUserSubscribed(ctx);
+  if (!subscribed) {
+    return ctx.reply(
+      '🔒 Для проверки баланса Stars подпишитесь на каналы:',
+      Markup.inlineKeyboard([
+        ...REQUIRED_CHANNELS.map(channel => [
+          Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
+        ]),
+        [Markup.button.callback('✅ Я подписался', 'check_sub')]
+      ])
+    );
+  }
+
+  try {
+    const transactions = db.prepare(`
+      SELECT item, amount, status, created_at 
+      FROM stars_transactions 
+      WHERE user_id = ? 
+      ORDER BY created_at DESC 
+      LIMIT 5
+    `).all(Number(id));
+
+    const totalStars = db.prepare('SELECT SUM(amount) as total FROM stars_transactions WHERE user_id = ? AND status = "completed"').get(Number(id)).total || 0;
+
+    let text = `💰 Ваш баланс Telegram Stars: ${totalStars} XTR\n\nПоследние транзакции:\n`;
+    if (transactions.length === 0) {
+      text += '📉 Нет транзакций.';
+    } else {
+      text += transactions.map(t => {
+        const date = new Date(t.created_at * 1000).toLocaleString('ru-RU');
+        return `🛒 ${t.item}: ${t.amount} XTR (${t.status}) — ${date}`;
+      }).join('\n');
+    }
+
+    logAction(id, 'check_stars_balance', 'STARS');
+    return ctx.reply(text, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
+  } catch (e) {
+    console.error('Ошибка проверки баланса Stars:', e);
+    logAction(id, `stars_balance_error_${e.message}`, 'STARS');
+    return ctx.reply(`❌ Ошибка при проверке баланса. Попробуйте снова или обратитесь в ${SUPPORT_LINK} через /paysupport.`);
   }
 });
 
@@ -236,6 +417,7 @@ bot.on('pre_checkout_query', async (ctx) => {
     logAction(id, `pre_checkout_${query.id}`, 'STARS');
   } catch (e) {
     console.error('Ошибка обработки pre_checkout_query:', e);
+    logAction(id, `pre_checkout_error_${e.message}`, 'STARS');
     await ctx.answerPreCheckoutQuery(false, 'Ошибка обработки платежа');
   }
 });
@@ -261,10 +443,12 @@ bot.on('successful_payment', async (ctx) => {
     await ctx.reply('🎉 Платёж успешен! Вы получили Premium Badge.');
   } catch (e) {
     console.error('Ошибка сохранения платежа:', e);
-    await ctx.reply('❌ Ошибка при обработке платежа. Свяжитесь с @magnumsupports через /paysupport.');
+    logAction(id, `successful_payment_error_${e.message}`, 'STARS');
+    await ctx.reply(`❌ Ошибка при обработке платежа. Свяжитесь с ${SUPPORT_LINK} через /paysupport.`);
   }
 });
 
+// Обработка callback_query
 bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
   const now = Date.now();
@@ -304,7 +488,7 @@ bot.on('callback_query', async (ctx) => {
       );
     }
     ctx.session.waitingForSupport = true;
-    return ctx.editMessageText('📞 Опишите вашу проблему, и мы свяжемся с вами через @magnumsupports.', {
+    return ctx.editMessageText(`📞 Опишите вашу проблему, и мы свяжемся с вами через ${SUPPORT_LINK}.`, {
       reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Назад', 'back')]] }
     });
   }
@@ -351,7 +535,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('▶️ Следующее задание', 'daily_tasks_2')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ])
-    });
+    );
   }
 
   if (action === 'daily_tasks_2') {
@@ -374,7 +558,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('🔙 Назад', 'back')],
         [Markup.button.callback('⬅️ Предыдущее задание', 'daily_tasks')]
       ])
-    });
+    );
   }
 
   if (action === 'exchange') {
@@ -409,6 +593,7 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
       [Markup.button.callback('📞 Поддержка', 'support')],
+      [Markup.button.callback('💸 Баланс Stars', 'stars_balance')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -442,6 +627,7 @@ bot.on('callback_query', async (ctx) => {
       ]));
     } catch (e) {
       db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, Number(ctx.from.id));
+      logAction(id, `withdraw_error_${amount}_${e.message}`, 'WITHDRAW');
       return ctx.answerCbQuery('❌ Ошибка при отправке заявки', { show_alert: true });
     }
   }
@@ -499,7 +685,7 @@ bot.on('callback_query', async (ctx) => {
       logAction(id, 'send_invoice_premium_badge', 'STARS');
     } catch (e) {
       console.error('Ошибка отправки инвойса:', e);
-      ctx.editMessageText('❌ Ошибка при создании платежа. Попробуйте снова.', {
+      ctx.editMessageText(`❌ Ошибка при создании платежа. Попробуйте снова или обратитесь в ${SUPPORT_LINK}.`, {
         reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Назад', 'back')]] }
       });
     }
@@ -518,6 +704,7 @@ bot.on('callback_query', async (ctx) => {
       [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
       [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
       [Markup.button.callback('💰 Статистика Stars', 'admin_stars_stats')],
+      [Markup.button.callback('📩 Тикеты поддержки', 'admin_support_tickets')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -563,6 +750,118 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply(text, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'admin')]
     ]));
+  }
+
+  if (action === 'admin_support_tickets') {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
+    
+    const tickets = db.prepare(`
+      SELECT id, user_id, username, issue, type, created_at 
+      FROM support_tickets 
+      WHERE status = 'open' 
+      ORDER BY created_at ASC 
+      LIMIT 10
+    `).all();
+
+    if (tickets.length === 0) {
+      return ctx.editMessageText('📩 Нет открытых тикетов поддержки.', {
+        reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Назад', 'admin')]] }
+      });
+    }
+
+    const ticketList = tickets.map((t, i) => {
+      const date = new Date(t.created_at * 1000).toLocaleString('ru-RU');
+      return `${i + 1}. #${t.id} от @${t.username || 'без ника'} (ID: ${t.user_id})\nТип: ${t.type}\nДата: ${date}`;
+    }).join('\n\n');
+
+    return ctx.editMessageText(
+      `📩 Открытые тикеты поддержки (${tickets.length}):\n\n${ticketList}`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            ...tickets.map(t => [
+              Markup.button.callback(`#${t.id}`, `admin_view_ticket_${t.id}`)
+            ]),
+            [Markup.button.callback('🔙 Назад', 'admin')]
+          ]
+        }
+      }
+    );
+  }
+
+  if (action.startsWith('admin_view_ticket_')) {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
+    
+    const ticketId = parseInt(action.split('_')[3]);
+    const ticket = db.prepare('SELECT id, user_id, username, issue, type, created_at FROM support_tickets WHERE id = ?').get(ticketId);
+    
+    if (!ticket) {
+      return ctx.editMessageText('❌ Тикет не найден.', {
+        reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Назад', 'admin_support_tickets')]] }
+      });
+    }
+
+    const date = new Date(ticket.created_at * 1000).toLocaleString('ru-RU');
+    const ticketText = `📩 Тикет #${ticket.id}\n` +
+                       `👤 Пользователь: @${ticket.username || 'без ника'} (ID: ${ticket.user_id})\n` +
+                       `📜 Тип: ${ticket.type}\n` +
+                       `📅 Дата: ${date}\n` +
+                       `💬 Проблема: ${ticket.issue}`;
+
+    return ctx.editMessageText(ticketText, {
+      reply_markup: {
+        inline_keyboard: [
+          [Markup.button.callback('📝 Ответить', `admin_reply_ticket_${ticketId}`)],
+          [Markup.button.callback('✏️ Редактировать', `admin_edit_ticket_${ticketId}`)],
+          [Markup.button.callback('❌ Закрыть', `admin_close_ticket_${ticketId}`)],
+          [Markup.button.callback('🔙 Назад', 'admin_support_tickets')]
+        ]
+      }
+    });
+  }
+
+  if (action.startsWith('admin_reply_ticket_')) {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
+    
+    const ticketId = parseInt(action.split('_')[3]);
+    ctx.session.waitingForTicketReply = ticketId;
+    return ctx.editMessageText('📝 Введите ответ на тикет:', {
+      reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Отмена', 'admin_support_tickets')]] }
+    });
+  }
+
+  if (action.startsWith('admin_edit_ticket_')) {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
+    
+    const ticketId = parseInt(action.split('_')[3]);
+    ctx.session.waitingForTicketEdit = ticketId;
+    return ctx.editMessageText('✏️ Введите новый текст тикета:', {
+      reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Отмена', 'admin_support_tickets')]] }
+    });
+  }
+
+  if (action.startsWith('admin_close_ticket_')) {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
+    
+    const ticketId = parseInt(action.split('_')[3]);
+    const ticket = db.prepare('SELECT user_id, username, type FROM support_tickets WHERE id = ?').get(ticketId);
+    
+    if (!ticket) {
+      return ctx.answerCbQuery('❌ Тикет не найден', { show_alert: true });
+    }
+
+    try {
+      db.prepare('UPDATE support_tickets SET status = ? WHERE id = ?').run('closed', ticketId);
+      await ctx.telegram.sendMessage(ticket.user_id, `✅ Тикет #${ticketId} (${ticket.type}) закрыт.`);
+      logAction(id, `close_ticket_${ticketId}_${ticket.type}`, 'SUPPORT');
+      return ctx.editMessageText(`✅ Тикет #${ticketId} закрыт.`, {
+        reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Назад', 'admin_support_tickets')]] }
+      });
+    } catch (e) {
+      console.error(`Ошибка закрытия тикета ${ticketId}:`, e);
+      logAction(id, `close_ticket_error_${ticketId}_${e.message}`, 'SUPPORT');
+      return ctx.answerCbQuery(`❌ Ошибка при закрытии тикета`, { show_alert: true });
+    }
   }
 
   if (action.startsWith('admin_check_screens')) {
@@ -615,6 +914,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
         [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
         [Markup.button.callback('💰 Статистика Stars', 'admin_stars_stats')],
+        [Markup.button.callback('📩 Тикеты поддержки', 'admin_support_tickets')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -727,6 +1027,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
         [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
         [Markup.button.callback('💰 Статистика Stars', 'admin_stars_stats')],
+        [Markup.button.callback('📩 Тикеты поддержки', 'admin_support_tickets')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -814,21 +1115,89 @@ bot.on('message', async (ctx) => {
       return ctx.reply('❌ Описание проблемы слишком длинное (максимум 500 символов).');
     }
 
+    const type = ctx.session.waitingForPaySupport ? 'paysupport' : 'support';
     try {
-      const supportType = ctx.session.waitingForPaySupport ? 'платежа Stars' : 'общая';
-      await ctx.telegram.sendMessage(
-        SUPPORT_USERNAME,
-        `📩 Новый запрос в поддержку (${supportType})\n👤 Пользователь: @${ctx.from.username || 'без ника'} (ID: ${id})\n📜 Проблема: ${issue}`
-      );
+      const ticketId = await sendSupportTicket(ctx, id, ctx.from.username || '', issue, type);
       ctx.session.waitingForSupport = false;
       ctx.session.waitingForPaySupport = false;
-      logAction(id, `create_support_${supportType}`, 'SUPPORT');
-      await ctx.reply(`✅ Ваш запрос отправлен в @magnumsupports. Мы свяжемся с вами в ближайшее время!`);
+      await ctx.reply(`✅ Тикет #${ticketId} отправлен в ${SUPPORT_LINK}. Мы свяжемся с вами в ближайшее время!`);
     } catch (e) {
-      console.error(`Ошибка отправки запроса в поддержку (${ctx.session.waitingForPaySupport ? 'paysupport' : 'support'}):`, e, { issue, user_id: id });
-      await ctx.reply('❌ Ошибка при отправке запроса. Попробуйте снова.');
+      console.error(`Ошибка отправки тикета (${type}):`, e);
+      await ctx.reply(`❌ Ошибка при отправке тикета. Попробуйте снова или свяжитесь с ${SUPPORT_LINK}.`);
     }
     return;
+  }
+
+  if (ctx.session.waitingForTicketReply && ADMIN_IDS.includes(id)) {
+    const ticketId = ctx.session.waitingForTicketReply;
+    const ticket = db.prepare('SELECT user_id, type FROM support_tickets WHERE id = ? AND status = ?').get(ticketId, 'open');
+    
+    if (!ticket) {
+      ctx.session.waitingForTicketReply = null;
+      return ctx.reply('❌ Тикет не найден или уже закрыт.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin_support_tickets')]
+      ]));
+    }
+
+    const replyText = ctx.message.text.trim();
+    if (replyText.length === 0) {
+      return ctx.reply('❌ Ответ не может быть пустым.');
+    }
+
+    try {
+      await ctx.telegram.sendMessage(
+        ticket.user_id,
+        `📩 Ответ на тикет #${ticketId} (${ticket.type}):\n${replyText}`
+      );
+      db.prepare('UPDATE support_tickets SET status = ? WHERE id = ?').run('responded', ticketId);
+      logAction(id, `reply_ticket_${ticketId}_${ticket.type}`, 'SUPPORT');
+      ctx.session.waitingForTicketReply = null;
+      return ctx.reply(`✅ Ответ на тикет #${ticketId} отправлен пользователю.`, Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin_support_tickets')]
+      ]));
+    } catch (e) {
+      console.error(`Ошибка отправки ответа на тикет ${ticketId}:`, e);
+      logAction(id, `reply_ticket_error_${ticketId}_${e.message}`, 'SUPPORT');
+      return ctx.reply(`❌ Ошибка при отправке ответа. Попробуйте снова.`, Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin_support_tickets')]
+      ]));
+    }
+  }
+
+  if (ctx.session.waitingForTicketEdit && ADMIN_IDS.includes(id)) {
+    const ticketId = ctx.session.waitingForTicketEdit;
+    const ticket = db.prepare('SELECT user_id, type FROM support_tickets WHERE id = ? AND status = ?').get(ticketId, 'open');
+    
+    if (!ticket) {
+      ctx.session.waitingForTicketEdit = null;
+      return ctx.reply('❌ Тикет не найден или уже закрыт.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin_support_tickets')]
+      ]));
+    }
+
+    const newIssue = ctx.message.text.trim();
+    if (newIssue.length === 0) {
+      return ctx.reply('❌ Текст тикета не может быть пустым.');
+    }
+
+    if (newIssue.length > 500) {
+      return ctx.reply('❌ Текст тикета слишком длинный (максимум 500 символов).');
+    }
+
+    try {
+      db.prepare('UPDATE support_tickets SET issue = ? WHERE id = ?').run(newIssue, ticketId);
+      logAction(id, `edit_ticket_${ticketId}_${ticket.type}`, 'SUPPORT');
+      ctx.session.waitingForTicketEdit = null;
+      return ctx.reply(`✅ Тикет #${ticketId} обновлён.`, Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin_support_tickets')]
+      ]));
+    } catch (e) {
+      console.error(`Ошибка редактирования тикета ${ticketId}:`, e);
+      logAction(id, `edit_ticket_error_${ticketId}_${e.message}`, 'SUPPORT');
+      return ctx.reply(`❌ Ошибка при редактировании тикета. Попробуйте снова.`, Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'admin_support_tickets')]
+      ]));
+    }
   }
 
   if (ctx.session.waitingForCode) {
