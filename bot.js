@@ -5,6 +5,31 @@ require('dotenv').config();
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
+// Проверка структуры таблицы support_tickets
+try {
+  const tableInfo = db.prepare('PRAGMA table_info(support_tickets)').all();
+  const expectedColumns = [
+    { name: 'id', type: 'INTEGER', notnull: 0, pk: 1 },
+    { name: 'user_id', type: 'INTEGER', notnull: 1 },
+    { name: 'username', type: 'TEXT', notnull: 0 },
+    { name: 'issue', type: 'TEXT', notnull: 1 },
+    { name: 'status', type: 'TEXT', notnull: 0, dflt_value: "'pending'" },
+    { name: 'created_at', type: 'INTEGER', notnull: 0 },
+    { name: 'updated_at', type: 'INTEGER', notnull: 0 }
+  ];
+  const isValid = expectedColumns.every(col => {
+    const found = tableInfo.find(t => t.name === col.name);
+    return found && found.type === col.type && found.notnull === col.notnull && (col.pk ? found.pk === col.pk : true);
+  });
+  if (!isValid) {
+    console.error('Ошибка: структура таблицы support_tickets не соответствует ожиданиям', tableInfo);
+  } else {
+    console.log('Структура таблицы support_tickets корректна');
+  }
+} catch (e) {
+  console.error('Ошибка проверки структуры таблицы support_tickets:', e);
+}
+
 // Настройка хранилища сессий в SQLite
 const sessionDB = {
   get: (key) => {
@@ -28,7 +53,7 @@ bot.use(session({
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
 const SUPPORT_USERNAME = '@magnumsupports';
-const BOT_LINK = 'https://t.me/firestars_rbot';
+const BOT_LINK = 'https://t.me/MagnumTapBot';
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/OtherBot';
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
@@ -67,7 +92,7 @@ async function isUserSubscribed(ctx) {
 async function sendWithdrawRequest(ctx, userId, username, amount) {
   const transaction = db.transaction(() => {
     const insert = db.prepare('INSERT INTO withdraws (user_id, username, amount, status) VALUES (?, ?, ?, ?)');
-    const result = insert.run(userId, username || '', amount, 'pending');
+    const result = insert.run(BigInt(userId), username || '', amount, 'pending');
     return result.lastInsertRowid;
   });
 
@@ -149,9 +174,9 @@ bot.start(async (ctx) => {
   const transaction = db.transaction(() => {
     const existing = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
     if (!existing) {
-      db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(id, username, referral);
+      db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(BigInt(id), username, referral ? BigInt(referral) : null);
       if (referral && referral !== id) {
-        db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(referral);
+        db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(BigInt(referral));
         logAction(referral, `referral_reward_${id}`, 'REFERRAL');
       }
       logAction(id, 'register', 'USER');
@@ -191,7 +216,7 @@ bot.command('support', async (ctx) => {
 // Команда /tickets
 bot.command('tickets', async (ctx) => {
   const id = ctx.from.id;
-  const tickets = db.prepare('SELECT id, issue, status, created_at FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC').all(id);
+  const tickets = db.prepare('SELECT id, issue, status, created_at FROM support_tickets WHERE user_id = ? ORDER BY created_at DESC').all(BigInt(id));
 
   if (tickets.length === 0) {
     return ctx.reply('У вас нет активных тикетов.', Markup.inlineKeyboard([
@@ -216,7 +241,7 @@ bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
   const now = Date.now();
   const action = ctx.callbackQuery.data;
-  let user = db.prepare('SELECT id, username, stars, last_farm, last_bonus, referred_by, daily_task_completed FROM users WHERE id = ?').get(id);
+  let user = db.prepare('SELECT id, username, stars, last_farm, last_bonus, referred_by, daily_task_completed FROM users WHERE id = ?').get(BigInt(id));
 
   if (!user && action !== 'check_sub') return ctx.answerCbQuery('Пользователь не найден');
 
@@ -228,9 +253,9 @@ bot.on('callback_query', async (ctx) => {
       return ctx.answerCbQuery('❌ Подписка не найдена!', { show_alert: true });
     }
     const username = ctx.from.username || '';
-    const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+    const existing = db.prepare('SELECT id FROM users WHERE id = ?').get(BigInt(id));
     if (!existing) {
-      db.prepare('INSERT INTO users (id, username) VALUES (?, ?)').run(id, username);
+      db.prepare('INSERT INTO users (id, username) VALUES (?, ?)').run(BigInt(id), username);
       logAction(id, 'check_subscription', 'USER');
     }
     await sendMainMenu(ctx);
@@ -315,7 +340,7 @@ bot.on('callback_query', async (ctx) => {
     if (!ticket) return ctx.answerCbQuery('❌ Тикет не найден или уже решён');
 
     const transaction = db.transaction(() => {
-      db.prepare('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?').run('resolved', Math.floor(Date.now() / 1000), ticketId);
+      db.prepare('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?').run('resolved', Math.floor(Date.now() / 1000).toString(), ticketId);
     });
 
     try {
@@ -356,7 +381,7 @@ bot.on('callback_query', async (ctx) => {
     const transaction = db.transaction(() => {
       db.prepare('UPDATE withdraws SET status = ? WHERE id = ?').run(newStatus, withdrawId);
       if (!isApprove) {
-        db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(withdraw.amount, withdraw.user_id);
+        db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(withdraw.amount, BigInt(withdraw.user_id));
       }
     });
 
@@ -394,7 +419,7 @@ bot.on('callback_query', async (ctx) => {
     }
 
     const reward = 0.1;
-    db.prepare('UPDATE users SET stars = stars + ?, last_farm = ? WHERE id = ?').run(reward, now, id);
+    db.prepare('UPDATE users SET stars = stars + ?, last_farm = ? WHERE id = ?').run(reward, now, BigInt(id));
     logAction(id, `farm_${reward}`, 'FARM');
     return ctx.answerCbQuery(`⭐ Вы заработали ${reward} звезды!`, { show_alert: true });
   }
@@ -408,7 +433,7 @@ bot.on('callback_query', async (ctx) => {
       return ctx.answerCbQuery(`🎁 Бонус можно получить через ${hoursLeft} ч.`, { show_alert: true });
     }
 
-    db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), id);
+    db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), BigInt(id));
     logAction(id, 'bonus_5', 'BONUS');
     return ctx.answerCbQuery('🎉 Вы получили ежедневный бонус: +5 звёзд!', { show_alert: true });
   }
@@ -432,7 +457,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'daily_tasks_2') {
-    const existing = db.prepare('SELECT id FROM screenshots WHERE user_id = ? AND task_type = ? AND approved = 1').get(id, 'launch_bot');
+    const existing = db.prepare('SELECT id FROM screenshots WHERE user_id = ? AND task_type = ? AND approved = 1').get(BigInt(id), 'launch_bot');
     if (existing) {
       return ctx.answerCbQuery('❌ Вы уже выполнили задание "Запусти бота".', { show_alert: true });
     }
@@ -469,8 +494,8 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'profile') {
-    const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(id).count;
-    const referredByUser = user.referred_by ? db.prepare('SELECT username FROM users WHERE id = ?').get(user.referred_by) : null;
+    const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(BigInt(id)).count;
+    const referredByUser = user.referred_by ? db.prepare('SELECT username FROM users WHERE id = ?').get(BigInt(user.referred_by)) : null;
     const referrerName = referredByUser ? `@${referredByUser.username || 'без ника'}` : '—';
     const displayName = ctx.from.first_name || '—';
 
@@ -508,7 +533,7 @@ bot.on('callback_query', async (ctx) => {
     if (!user || user.stars < amount) return ctx.answerCbQuery('Недостаточно звёзд для вывода.', { show_alert: true });
 
     const transaction = db.transaction(() => {
-      db.prepare('UPDATE users SET stars = stars - ? WHERE id = ?').run(amount, ctx.from.id);
+      db.prepare('UPDATE users SET stars = stars - ? WHERE id = ?').run(amount, BigInt(ctx.from.id));
       sendWithdrawRequest(ctx, ctx.from.id, ctx.from.username || '', amount);
     });
 
@@ -518,7 +543,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     } catch (e) {
-      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, ctx.from.id);
+      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, BigInt(ctx.from.id));
       return ctx.answerCbQuery('❌ Ошибка при отправке заявки', { show_alert: true });
     }
   }
@@ -637,7 +662,7 @@ bot.on('callback_query', async (ctx) => {
 
     const index = Math.max(0, Math.min(currentIndex, pending.length - 1));
     const scr = pending[index];
-    const userWhoSent = db.prepare('SELECT username FROM users WHERE id = ?').get(scr.user_id);
+    const userWhoSent = db.prepare('SELECT username FROM users WHERE id = ?').get(BigInt(scr.user_id));
     const taskDescription = scr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
 
     logAction(id, `view_screenshot_${scr.id}_type_${scr.task_type}`, 'SCREENSHOT');
@@ -697,7 +722,7 @@ bot.on('callback_query', async (ctx) => {
       }
 
       const nextScr = pending[0];
-      const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(nextScr.user_id);
+      const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(BigInt(nextScr.user_id));
       const nextTaskDescription = nextScr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
 
       const inlineKeyboard = [
@@ -726,7 +751,7 @@ bot.on('callback_query', async (ctx) => {
 
     const transaction = db.transaction(() => {
       if (isApprove) {
-        db.prepare('UPDATE users SET stars = stars + 1.5, daily_task_completed = daily_task_completed + 1 WHERE id = ?').run(screen.user_id);
+        db.prepare('UPDATE users SET stars = stars + 1.5, daily_task_completed = daily_task_completed + 1 WHERE id = ?').run(BigInt(screen.user_id));
         db.prepare('UPDATE screenshots SET approved = 1 WHERE id = ?').run(screenId);
       } else {
         db.prepare('UPDATE screenshots SET approved = 0 WHERE id = ?').run(screenId);
@@ -752,7 +777,7 @@ bot.on('callback_query', async (ctx) => {
       }
 
       const nextScr = pending[0];
-      const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(nextScr.user_id);
+      const nextUser = db.prepare('SELECT username FROM users WHERE id = ?').get(BigInt(nextScr.user_id));
       const nextTaskDescription = nextScr.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал';
 
       const inlineKeyboard = [
@@ -799,7 +824,7 @@ bot.on('callback_query', async (ctx) => {
 
 bot.on('photo', async (ctx) => {
   const id = ctx.from.id;
-  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(id);
+  const user = db.prepare('SELECT id FROM users WHERE id = ?').get(BigInt(id));
   if (!user) return;
 
   ctx.session = ctx.session || {};
@@ -810,7 +835,7 @@ bot.on('photo', async (ctx) => {
   }
 
   const taskType = ctx.session.waitingForTask === 'launch_bot' ? 'launch_bot' : 'subscribe_channel';
-  const lastScreenshot = db.prepare('SELECT created_at FROM screenshots WHERE user_id = ? AND task_type = ? AND approved IS NULL ORDER BY created_at DESC LIMIT 1').get(id, taskType);
+  const lastScreenshot = db.prepare('SELECT created_at FROM screenshots WHERE user_id = ? AND task_type = ? AND approved IS NULL ORDER BY created_at DESC LIMIT 1').get(BigInt(id), taskType);
 
   if (lastScreenshot && (Date.now() / 1000 - lastScreenshot.created_at) < SCREENSHOT_LIMIT_SECONDS) {
     const secondsLeft = Math.ceil(SCREENSHOT_LIMIT_SECONDS - (Date.now() / 1000 - lastScreenshot.created_at));
@@ -821,7 +846,7 @@ bot.on('photo', async (ctx) => {
   const fileId = photoArray[photoArray.length - 1].file_id;
 
   db.prepare('INSERT INTO screenshots (user_id, file_id, task_type, created_at) VALUES (?, ?, ?, ?)')
-    .run(id, fileId, taskType, Math.floor(Date.now() / 1000));
+    .run(BigInt(id), fileId, taskType, Math.floor(Date.now() / 1000).toString());
 
   await ctx.reply(`✅ Скриншот для задания "${taskType === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал'}" отправлен на проверку.`);
   logAction(id, `submit_screen_${taskType}`, 'SCREENSHOT');
@@ -840,7 +865,7 @@ bot.on('message', async (ctx) => {
 
   // Проверяем наличие ctx.from
   if (!id) {
-    console.error('Ошибка: ctx.from отсутствует', ctx);
+    console.error('Ошибка: ctx.from отсутствует', JSON.stringify(ctx, null, 2));
     return ctx.reply('❌ Ошибка: не удалось определить пользователя. Попробуйте снова.');
   }
 
@@ -880,42 +905,40 @@ bot.on('message', async (ctx) => {
 
     // Формируем данные для вставки
     const ticketData = {
-      user_id: id,
+      user_id: BigInt(id), // Явное преобразование в BigInt
       username: typeof ctx.from.username === 'string' ? ctx.from.username : '',
       issue: issue,
       status: 'pending',
-      created_at: Math.floor(Date.now() / 1000),
-      updated_at: Math.floor(Date.now() / 1000)
+      created_at: Math.floor(Date.now() / 1000).toString(), // Преобразуем в строку
+      updated_at: Math.floor(Date.now() / 1000).toString() // Преобразуем в строку
     };
 
-    // Логируем данные перед выполнением запроса
-    console.log(`Попытка создания тикета для user ${id}:`, ticketData);
+    // Логируем данные и их типы перед выполнением запроса
+    console.log(`Попытка создания тикета для user ${id}:`, {
+      user_id: { value: ticketData.user_id, type: typeof ticketData.user_id },
+      username: { value: ticketData.username, type: typeof ticketData.username },
+      issue: { value: ticketData.issue, type: typeof ticketData.issue },
+      status: { value: ticketData.status, type: typeof ticketData.status },
+      created_at: { value: ticketData.created_at, type: typeof ticketData.created_at },
+      updated_at: { value: ticketData.updated_at, type: typeof ticketData.updated_at }
+    });
 
     // Выполняем транзакцию
     const transaction = db.transaction(() => {
       const insert = db.prepare('INSERT INTO support_tickets (user_id, username, issue, status, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)');
-      // Проверяем типы данных перед вставкой
       const params = [
-        ticketData.user_id, // number
-        ticketData.username, // string
-        ticketData.issue, // string
-        ticketData.status, // string
-        ticketData.created_at, // number
-        ticketData.updated_at // number
+        ticketData.user_id,
+        ticketData.username,
+        ticketData.issue,
+        ticketData.status,
+        ticketData.created_at,
+        ticketData.updated_at
       ];
-
-      // Дополнительная проверка типов
-      params.forEach((param, index) => {
-        const validTypes = ['number', 'string', 'bigint', 'object', 'undefined'];
-        if (!validTypes.includes(typeof param) || (typeof param === 'object' && param !== null)) {
-          throw new Error(`Недопустимый тип параметра ${index + 1}: ${typeof param}, значение: ${param}`);
-        }
-      });
 
       const result = insert.run(...params);
 
       db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(result.lastInsertRowid, id, issue, false, Math.floor(Date.now() / 1000));
+        .run(result.lastInsertRowid, ticketData.user_id, ticketData.issue, false, ticketData.created_at);
       return result.lastInsertRowid;
     });
 
@@ -927,7 +950,7 @@ bot.on('message', async (ctx) => {
       // Уведомление админам в канал
       await ctx.telegram.sendMessage(WITHDRAW_CHANNEL, `📩 Новый тикет #${ticketId}\n👤 Пользователь: @${ticketData.username || 'без ника'} (ID: ${id})\n📜 Проблема: ${issue}`);
     } catch (e) {
-      console.error('Ошибка создания тикета:', e);
+      console.error('Ошибка создания тикета:', e, { params: ticketData, context: JSON.stringify(ctx, null, 2) });
       await ctx.reply('❌ Ошибка при создании тикета. Попробуйте снова.');
     }
     return;
@@ -955,8 +978,9 @@ bot.on('message', async (ctx) => {
 
     const transaction = db.transaction(() => {
       db.prepare('INSERT INTO ticket_messages (ticket_id, user_id, message, is_admin, created_at) VALUES (?, ?, ?, ?, ?)')
-        .run(ticketId, id, message, true, Math.floor(Date.now() / 1000));
-      db.prepare('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?').run('in_progress', Math.floor(Date.now() / 1000), ticketId);
+        .run(ticketId, BigInt(id), message, true, Math.floor(Date.now() / 1000).toString());
+      db.prepare('UPDATE support_tickets SET status = ?, updated_at = ? WHERE id = ?')
+        .run('in_progress', Math.floor(Date.now() / 1000).toString(), ticketId);
     });
 
     try {
@@ -998,7 +1022,7 @@ bot.on('message', async (ctx) => {
     }
 
     const transaction = db.transaction(() => {
-      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.reward, id);
+      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.reward, BigInt(id));
       usedBy.push(id);
       db.prepare('UPDATE promo_codes SET activations_left = ?, used_by = ? WHERE code = ?')
         .run(promo.activations_left - 1, JSON.stringify(usedBy), code);
