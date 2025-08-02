@@ -21,8 +21,11 @@ async function isUserSubscribed(ctx) {
 function sendMainMenu(ctx) {
   return ctx.reply('🚀 Главное меню', Markup.inlineKeyboard([
     [Markup.button.callback('⭐ Фарм', 'farm'), Markup.button.callback('🎁 Бонус', 'bonus')],
-    [Markup.button.callback('👤 Профиль', 'profile'), Markup.button.callback('🏆 Лидеры', 'leaders')],
-    [Markup.button.callback('📊 Статистика', 'stats')],
+    [
+      Markup.button.callback('👤 Профиль', 'profile'),
+      Markup.button.callback('🏆 Лидеры', 'leaders'),
+      Markup.button.callback('📊 Статистика', 'stats')
+    ],
     [Markup.button.callback('📩 Пригласить друзей', 'ref')],
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
     ctx.from.id === ADMIN_ID ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
@@ -113,24 +116,24 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'profile') {
-  const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(id).count;
-  const referredByUser = user.referred_by ? db.prepare('SELECT username FROM users WHERE id = ?').get(user.referred_by) : null;
-  const referrerName = referredByUser ? `@${referredByUser.username || 'без ника'}` : '—';
-  const displayName = ctx.from.first_name || '—';
+    const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(id).count;
+    const referredByUser = user.referred_by ? db.prepare('SELECT username FROM users WHERE id = ?').get(user.referred_by) : null;
+    const referrerName = referredByUser ? `@${referredByUser.username || 'без ника'}` : '—';
+    const displayName = ctx.from.first_name || '—';
 
-  const profileText =
-    `🌟 Ваш профиль в MagnumTap 🌟\n\n` +
-    `👤 Имя: ${displayName}\n` +
-    `🆔 Telegram ID: ${user.id}\n\n` +
-    `💫 Ваши звёзды: ${user.stars}\n` +
-    `👥 Приглашено друзей: ${invited}\n` +
-    `📣 Пригласил: ${referrerName}\n\n` +
-    `🔥 Используйте звёзды для получения бонусов и участия в акциях!`;
+    const profileText =
+      `🌟 Ваш профиль в MagnumTap 🌟\n\n` +
+      `👤 Имя: ${displayName}\n` +
+      `🆔 Telegram ID: ${user.id}\n\n` +
+      `💫 Ваши звёзды: ${user.stars}\n` +
+      `👥 Приглашено друзей: ${invited}\n` +
+      `📣 Пригласил: ${referrerName}\n\n` +
+      `🔥 Используйте звёзды для получения бонусов и участия в акциях!`;
 
     return ctx.reply(profileText, Markup.inlineKeyboard([
-    [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
-    [Markup.button.callback('🔙 Назад', 'back')]
-  ]));
+      [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
   }
 
   if (action === 'withdraw_stars') {
