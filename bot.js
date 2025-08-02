@@ -118,7 +118,7 @@ bot.start(async (ctx) => {
   );
 
   await sendMainMenu(ctx);
-}); // <-- Закрываем bot.start здесь, после reply
+});
 
 bot.on('callback_query', async (ctx) => {
   const id = ctx.from.id;
