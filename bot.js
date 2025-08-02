@@ -246,7 +246,7 @@ if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw
   }
 
   if (action === 'daily_tasks_2') {
-    const botLink = 'https://t.me/YourBotUsername'; // Вставь сюда свою ссылку на бота
+    const botLink = 'https://t.me/firestars_rbot?start=6587897295'; // Вставь сюда свою ссылку на бота
 
     const text =
       `📋 <b>Задание 2 из 2: Запусти бота</b> 📋\n\n` +
