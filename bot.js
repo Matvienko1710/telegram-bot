@@ -115,15 +115,16 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'farm') {
-    const cooldown = 60 * 1000;
-    if (now - user.last_farm < cooldown) {
-      const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
-      return ctx.answerCbQuery(`⏳ Подождите ${seconds} сек.`, { show_alert: true });
-    }
-
-    db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, id);
-    return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
+  const cooldown = 60 * 1000;
+  if (now - user.last_farm < cooldown) {
+    const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
+    return ctx.answerCbQuery(`⏳ Подождите ${seconds} сек.`, { show_alert: true });
   }
+
+  const reward = 0.1; // 0.1 звезды за фарм
+  db.prepare('UPDATE users SET stars = stars + ?, last_farm = ? WHERE id = ?').run(reward, now, id);
+  return ctx.answerCbQuery(`⭐ Вы заработали ${reward} звезды!`, { show_alert: true });
+}
 
   if (action === 'bonus') {
     const nowDay = dayjs();
