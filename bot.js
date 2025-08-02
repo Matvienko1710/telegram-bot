@@ -7,11 +7,11 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
-const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295]; // Поддержка нескольких админов
+const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
 const SUPPORT_USERNAME = '@magnumsupports';
-const BOT_LINK = 'https://t.me/firestars_rbot?start=6587897295';
+const BOT_LINK = 'https://t.me/firestars_rbot'; // Чистая ссылка на бота
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
-const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60'); // Настраиваемый кулдаун
+const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
 
 // Функция отправки заявки на вывод
 async function sendWithdrawRequest(ctx, userId, username, amount) {
@@ -144,7 +144,6 @@ bot.on('callback_query', async (ctx) => {
     return ctx.answerCbQuery('✅ Подписка подтверждена');
   }
 
-  // Обработка заявок на вывод
   if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
     if (!ADMIN_IDS.includes(ctx.from.id)) {
       return ctx.answerCbQuery('⛔ Доступ запрещён');
@@ -326,7 +325,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     } catch (e) {
-      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, ctx.from.id); // Возврат звёзд при ошибке
+      db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, ctx.from.id);
       return ctx.answerCbQuery('❌ Ошибка при отправке заявки', { show_alert: true });
     }
   }
@@ -357,7 +356,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'ref') {
-    const link = BOT_LINK.replace('?start=', `?start=${ctx.from.id}`);
+    const link = `${BOT_LINK}?start=${ctx.from.id}`;
     const refText = `📩 Приглашайте друзей и получайте бонусные звёзды за каждого приглашённого!\n\n` +
                     `Чем больше друзей — тем больше наград и возможностей.\n\n` +
                     `Ваша реферальная ссылка:\n${link}`;
