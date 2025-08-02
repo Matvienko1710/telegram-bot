@@ -5,7 +5,7 @@ require('dotenv').config();
 
 const bot = new Telegraf(process.env.BOT_TOKEN);
 
-// Проверка структуры таблицы users (для примера, без support_tickets)
+// Проверка структуры таблицы users
 try {
   const tableInfo = db.prepare('PRAGMA table_info(users)').all();
   const expectedColumns = [
@@ -33,7 +33,7 @@ try {
   console.error('Ошибка проверки структуры таблицы users:', e);
 }
 
-// Настройка хранилища сессий в SQLite
+// Настройка хранилища сессий
 const sessionDB = {
   get: (key) => {
     const row = db.prepare('SELECT data FROM sessions WHERE id = ?').get(key);
@@ -47,7 +47,6 @@ const sessionDB = {
   }
 };
 
-// Инициализация middleware сессий
 bot.use(session({
   store: sessionDB,
   getSessionKey: (ctx) => ctx.from && ctx.chat ? `${ctx.from.id}:${ctx.chat.id}` : undefined
@@ -62,14 +61,12 @@ const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
 const SCREENSHOT_LIMIT_SECONDS = 60;
 
-// Структурированное логирование
 function logAction(userId, action, category = 'GENERAL') {
   const timestamp = new Date().toISOString();
   db.prepare('INSERT INTO logs (user_id, action, timestamp) VALUES (?, ?, ?)').run(userId, `${category}: ${action}`, Date.now());
   console.log(`[${timestamp}] [${category}] User ${userId}: ${action}`);
 }
 
-// Проверка подписки на каналы с кэшированием
 async function isUserSubscribed(ctx) {
   ctx.session = ctx.session || {};
   if (ctx.session.subscribed) return true;
@@ -91,7 +88,6 @@ async function isUserSubscribed(ctx) {
   return subscribed;
 }
 
-// Отправка заявки на вывод
 async function sendWithdrawRequest(ctx, userId, username, amount) {
   const transaction = db.transaction(() => {
     const insert = db.prepare('INSERT INTO withdraws (user_id, username, amount, status) VALUES (?, ?, ?, ?)');
@@ -122,7 +118,6 @@ async function sendWithdrawRequest(ctx, userId, username, amount) {
   }
 }
 
-// Главное меню
 function sendMainMenu(ctx) {
   return ctx.reply('🚀 Главное меню', Markup.inlineKeyboard([
     [Markup.button.callback('⭐ Фарм', 'farm'), Markup.button.callback('🎁 Бонус', 'bonus')],
@@ -135,11 +130,12 @@ function sendMainMenu(ctx) {
     [Markup.button.callback('📩 Пригласить друзей', 'ref')],
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
     [Markup.button.callback('📋 Задания', 'daily_tasks')],
+    [Markup.button.callback('💰 Купить премиум', 'buy_premium')],
     ADMIN_IDS.includes(ctx.from.id) ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
   ]));
 }
 
-// Команда /backup для сохранения базы данных
+// Команда /backup
 bot.command('backup', (ctx) => {
   if (!ADMIN_IDS.includes(ctx.from.id)) return ctx.reply('⛔ Доступ запрещён');
   const fs = require('fs');
@@ -150,7 +146,7 @@ bot.command('backup', (ctx) => {
     logAction(ctx.from.id, 'backup_database', 'ADMIN');
   } catch (e) {
     console.error('Ошибка создания бэкапа:', e);
-    ctx.reply('❌ Ошибка при создании бэкапа базы данных.');
+    ctx.reply('❌ Ошибка при создания бэкапа базы данных.');
   }
 });
 
@@ -174,17 +170,34 @@ bot.command('support', async (ctx) => {
   return ctx.reply('📞 Опишите вашу проблему, и мы свяжемся с вами через @magnumsupports.');
 });
 
-bot.start(async (ctx) => {
+// Команда /paysupport
+bot.command('paysupport', async (ctx) => {
   const id = ctx.from.id;
-  const username = ctx.from.username || '';
-  const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
-
   ctx.session = ctx.session || {};
-
   const subscribed = await isUserSubscribed(ctx);
   if (!subscribed) {
     return ctx.reply(
-      '🔒 Для доступа к функциям бота необходимо подписаться на каналы:',
+      '🔒 Для обращения в поддержку подпишитесь на каналы:',
+      Markup.inlineKeyboard([
+        ...REQUIRED_CHANNELS.map(channel => [
+          Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
+        ]),
+        [Markup.button.callback('✅ Я подписался', 'check_sub')]
+      ])
+    );
+  }
+  ctx.session.waitingForPaySupport = true;
+  return ctx.reply('📞 Опишите проблему с оплатой Telegram Stars, и мы свяжемся с вами через @magnumsupports.');
+});
+
+// Команда /buy
+bot.command('buy', async (ctx) => {
+  const id = ctx.from.id;
+  ctx.session = ctx.session || {};
+  const subscribed = await isUserSubscribed(ctx);
+  if (!subscribed) {
+    return ctx.reply(
+      '🔒 Для покупки подпишитесь на каналы:',
       Markup.inlineKeyboard([
         ...REQUIRED_CHANNELS.map(channel => [
           Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
@@ -194,39 +207,62 @@ bot.start(async (ctx) => {
     );
   }
 
-  const transaction = db.transaction(() => {
-    const existing = db.prepare('SELECT id, username FROM users WHERE id = ?').get(id);
-    if (!existing) {
-      db.prepare('INSERT INTO users (id, username, referred_by) VALUES (?, ?, ?)').run(Number(id), username, referral ? Number(referral) : null);
-      if (referral && referral !== id) {
-        db.prepare('UPDATE users SET stars = stars + 5 WHERE id = ?').run(Number(referral));
-        logAction(referral, `referral_reward_${id}`, 'REFERRAL');
-      }
-      logAction(id, 'register', 'USER');
+  try {
+    const invoice = await ctx.telegram.sendInvoice(id, {
+      title: 'Premium Badge',
+      description: 'Получите эксклюзивный премиум-значок для вашего профиля!',
+      payload: `premium_badge_${id}_${Date.now()}`,
+      provider_token: '',
+      currency: 'XTR',
+      prices: [{ label: 'Premium Badge', amount: 10 }],
+      start_parameter: 'buy_premium'
+    });
+    logAction(id, 'send_invoice_premium_badge', 'STARS');
+  } catch (e) {
+    console.error('Ошибка отправки инвойса:', e);
+    ctx.reply('❌ Ошибка при создании платежа. Попробуйте снова.');
+  }
+});
+
+// Обработка pre_checkout_query
+bot.on('pre_checkout_query', async (ctx) => {
+  const id = ctx.from.id;
+  const query = ctx.preCheckoutQuery;
+  try {
+    if (query.currency !== 'XTR') {
+      return ctx.answerPreCheckoutQuery(false, 'Неподдерживаемая валюта');
     }
+    await ctx.answerPreCheckoutQuery(true);
+    logAction(id, `pre_checkout_${query.id}`, 'STARS');
+  } catch (e) {
+    console.error('Ошибка обработки pre_checkout_query:', e);
+    await ctx.answerPreCheckoutQuery(false, 'Ошибка обработки платежа');
+  }
+});
+
+// Обработка успешного платежа
+bot.on('successful_payment', async (ctx) => {
+  const id = ctx.from.id;
+  const payment = ctx.message.successful_payment;
+  const payload = payment.invoice_payload;
+  const item = payload.split('_')[0];
+  const amount = payment.total_amount;
+
+  const transaction = db.transaction(() => {
+    db.prepare(`
+      INSERT INTO stars_transactions (user_id, telegram_payment_id, amount, item, status, created_at)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(Number(id), payment.telegram_payment_charge_id, amount, item, 'completed', Math.floor(Date.now() / 1000));
   });
 
   try {
     transaction();
-    if (referral && referral !== id) {
-      await ctx.telegram.sendMessage(referral, `🎉 Твой реферал @${username || 'без ника'} зарегистрировался! +5 звёзд`);
-    }
+    logAction(id, `successful_payment_${item}_${amount}`, 'STARS');
+    await ctx.reply('🎉 Платёж успешен! Вы получили Premium Badge.');
   } catch (e) {
-    console.error(`Ошибка регистрации пользователя ${id}:`, e);
+    console.error('Ошибка сохранения платежа:', e);
+    await ctx.reply('❌ Ошибка при обработке платежа. Свяжитесь с @magnumsupports через /paysupport.');
   }
-
-  await ctx.reply(
-    `👋 Привет, <b>${ctx.from.first_name || 'друг'}!</b>\n\n` +
-    `Добро пожаловать в <b>MagnumTap</b> — твоё космическое приключение по сбору звёзд!\n\n` +
-    `✨ Здесь ты можешь:\n` +
-    `• Зарабатывать звёзды с помощью кнопки «Фарм»\n` +
-    `• Получать ежедневные бонусы\n` +
-    `• Приглашать друзей и побеждать в топах!\n\n` +
-    `🚀 Желаем успешного фарма!`,
-    { parse_mode: 'HTML' }
-  );
-
-  await sendMainMenu(ctx);
 });
 
 bot.on('callback_query', async (ctx) => {
@@ -252,6 +288,25 @@ bot.on('callback_query', async (ctx) => {
     }
     await sendMainMenu(ctx);
     return ctx.answerCbQuery('✅ Подписка подтверждена');
+  }
+
+  if (action === 'support') {
+    const subscribed = await isUserSubscribed(ctx);
+    if (!subscribed) {
+      return ctx.editMessageText(
+        '🔒 Для обращения в поддержку подпишитесь на каналы:',
+        Markup.inlineKeyboard([
+          ...REQUIRED_CHANNELS.map(channel => [
+            Markup.button.url(`📢 ${channel}`, `https://t.me/${channel.replace('@', '')}`)
+          ]),
+          [Markup.button.callback('✅ Я подписался', 'check_sub')]
+        ])
+      );
+    }
+    ctx.session.waitingForSupport = true;
+    return ctx.editMessageText('📞 Опишите вашу проблему, и мы свяжемся с вами через @magnumsupports.', {
+      reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Назад', 'back')]] }
+    });
   }
 
   if (action === 'farm') {
@@ -430,6 +485,26 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply('💬 Введите промокод:');
   }
 
+  if (action === 'buy_premium') {
+    try {
+      const invoice = await ctx.telegram.sendInvoice(id, {
+        title: 'Premium Badge',
+        description: 'Получите эксклюзивный премиум-значок для вашего профиля!',
+        payload: `premium_badge_${id}_${Date.now()}`,
+        provider_token: '',
+        currency: 'XTR',
+        prices: [{ label: 'Premium Badge', amount: 10 }],
+        start_parameter: 'buy_premium'
+      });
+      logAction(id, 'send_invoice_premium_badge', 'STARS');
+    } catch (e) {
+      console.error('Ошибка отправки инвойса:', e);
+      ctx.editMessageText('❌ Ошибка при создании платежа. Попробуйте снова.', {
+        reply_markup: { inline_keyboard: [[Markup.button.callback('🔙 Назад', 'back')]] }
+      });
+    }
+  }
+
   if (action === 'admin') {
     if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
     if (ctx.callbackQuery.message.photo) {
@@ -442,6 +517,7 @@ bot.on('callback_query', async (ctx) => {
       [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
       [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
       [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
+      [Markup.button.callback('💰 Статистика Stars', 'admin_stars_stats')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -468,25 +544,23 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
   }
 
-  if (action === 'admin_screen_stats') {
+  if (action === 'admin_stars_stats') {
     const stats = db.prepare(`
       SELECT 
-        task_type,
-        SUM(CASE WHEN approved IS NULL THEN 1 ELSE 0 END) as pending,
-        SUM(CASE WHEN approved = 1 THEN 1 ELSE 0 END) as approved,
-        SUM(CASE WHEN approved = 0 THEN 1 ELSE 0 END) as rejected
-      FROM screenshots
-      GROUP BY task_type
-    `).all();
+        SUM(amount) as total_stars,
+        COUNT(*) as total_transactions,
+        SUM(CASE WHEN status = 'completed' THEN 1 ELSE 0 END) as completed,
+        SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END) as pending
+      FROM stars_transactions
+    `).get();
 
-    const text = stats.map(s => 
-      `📸 ${s.task_type === 'launch_bot' ? 'Запуск бота' : 'Подписка на канал'}:\n` +
-      `⏳ Ожидает: ${s.pending}\n` +
-      `✅ Одобрено: ${s.approved}\n` +
-      `❌ Отклонено: ${s.rejected}`
-    ).join('\n\n');
+    const text = `💰 Статистика Telegram Stars:\n\n` +
+                 `📈 Всего Stars: ${stats.total_stars || 0}\n` +
+                 `📊 Всего транзакций: ${stats.total_transactions || 0}\n` +
+                 `✅ Завершено: ${stats.completed || 0}\n` +
+                 `⏳ Ожидает: ${stats.pending || 0}`;
 
-    return ctx.reply(`📈 Статистика скриншотов:\n\n${text || 'Нет данных'}`, Markup.inlineKeyboard([
+    return ctx.reply(text, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'admin')]
     ]));
   }
@@ -540,6 +614,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
         [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
+        [Markup.button.callback('💰 Статистика Stars', 'admin_stars_stats')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -651,6 +726,7 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
         [Markup.button.callback('✅ Проверка скриншотов', 'admin_check_screens')],
         [Markup.button.callback('📈 Статистика скриншотов', 'admin_screen_stats')],
+        [Markup.button.callback('💰 Статистика Stars', 'admin_stars_stats')],
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
     }
@@ -703,13 +779,11 @@ bot.on('message', async (ctx) => {
   const id = ctx.from ? ctx.from.id : null;
   ctx.session = ctx.session || {};
 
-  // Проверяем наличие ctx.from
   if (!id) {
     console.error('Ошибка: ctx.from отсутствует', JSON.stringify(ctx, null, 2));
     return ctx.reply('❌ Ошибка: не удалось определить пользователя. Попробуйте снова.');
   }
 
-  // Проверка подписки
   const subscribed = await isUserSubscribed(ctx);
   if (!subscribed) {
     return ctx.reply(
@@ -723,8 +797,7 @@ bot.on('message', async (ctx) => {
     );
   }
 
-  // Обработка поддержки
-  if (ctx.session.waitingForSupport) {
+  if (ctx.session.waitingForSupport || ctx.session.waitingForPaySupport) {
     if (!ctx.message || !ctx.message.text || typeof ctx.message.text !== 'string') {
       console.error('Ошибка: сообщение не содержит текст', { message: ctx.message });
       return ctx.reply('❌ Пожалуйста, опишите проблему текстом (без стикеров, фото или других данных).');
@@ -742,21 +815,22 @@ bot.on('message', async (ctx) => {
     }
 
     try {
+      const supportType = ctx.session.waitingForPaySupport ? 'платежа Stars' : 'общая';
       await ctx.telegram.sendMessage(
         SUPPORT_USERNAME,
-        `📩 Новый запрос в поддержку\n👤 Пользователь: @${ctx.from.username || 'без ника'} (ID: ${id})\n📜 Проблема: ${issue}`
+        `📩 Новый запрос в поддержку (${supportType})\n👤 Пользователь: @${ctx.from.username || 'без ника'} (ID: ${id})\n📜 Проблема: ${issue}`
       );
       ctx.session.waitingForSupport = false;
-      logAction(id, 'create_support', 'SUPPORT');
+      ctx.session.waitingForPaySupport = false;
+      logAction(id, `create_support_${supportType}`, 'SUPPORT');
       await ctx.reply(`✅ Ваш запрос отправлен в @magnumsupports. Мы свяжемся с вами в ближайшее время!`);
     } catch (e) {
-      console.error('Ошибка отправки запроса в поддержку:', e, { issue, user_id: id });
+      console.error(`Ошибка отправки запроса в поддержку (${ctx.session.waitingForPaySupport ? 'paysupport' : 'support'}):`, e, { issue, user_id: id });
       await ctx.reply('❌ Ошибка при отправке запроса. Попробуйте снова.');
     }
     return;
   }
 
-  // Обработка промокодов
   if (ctx.session.waitingForCode) {
     const code = ctx.message.text.trim();
     const promo = db.prepare('SELECT * FROM promo_codes WHERE code = ?').get(code);
@@ -795,7 +869,6 @@ bot.on('message', async (ctx) => {
     }
   }
 
-  // Обработка админ-рассылки
   if (ctx.session.broadcast && ADMIN_IDS.includes(id)) {
     const users = db.prepare('SELECT id FROM users').all();
     let successCount = 0;
@@ -812,7 +885,6 @@ bot.on('message', async (ctx) => {
     return ctx.reply(`✅ Рассылка завершена. Отправлено ${successCount} пользователям.`);
   }
 
-  // Обработка добавления промокода
   if (ctx.session.waitingForPromo && ADMIN_IDS.includes(id)) {
     const parts = ctx.message.text.trim().split(' ');
     if (parts.length !== 3) return ctx.reply('❌ Неверный формат. Попробуйте снова.');
