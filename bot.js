@@ -212,7 +212,7 @@ bot.on('callback_query', async (ctx) => {
   if (action === 'admin_addcode') {
     ctx.session = ctx.session || {};
     ctx.session.waitingForPromo = true;
-    return ctx.reply('✏️ Введите промокод и количество звёзд через пробел:\nНапример: `CODE123 10`', { parse_mode: 'Markdown' });
+    return ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
   }
 
   if (action === 'back') {
@@ -245,29 +245,49 @@ bot.on('message', async (ctx) => {
       return ctx.reply('❌ Неверный промокод!');
     }
 
-    if (promo.used_by) {
+    if (promo.activations_left === 0) {
       ctx.session.waitingForCode = false;
-      return ctx.reply('⚠️ Этот промокод уже использован.');
+      return ctx.reply('⚠️ Промокод больше не активен (лимит активаций исчерпан).');
+    }
+
+    let usedBy = promo.used_by ? JSON.parse(promo.used_by) : [];
+
+    if (usedBy.includes(id)) {
+      ctx.session.waitingForCode = false;
+      return ctx.reply('⚠️ Вы уже использовали этот промокод.');
     }
 
     db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.reward, id);
-    db.prepare('UPDATE promo_codes SET used_by = ? WHERE code = ?').run(id, code);
+
+    // Обновляем оставшиеся активации и список использовавших
+    usedBy.push(id);
+    const newActivationsLeft = promo.activations_left - 1;
+
+    db.prepare('UPDATE promo_codes SET activations_left = ?, used_by = ? WHERE code = ?')
+      .run(newActivationsLeft, JSON.stringify(usedBy), code);
 
     ctx.session.waitingForCode = false;
     return ctx.reply(`✅ Промокод активирован! +${promo.reward} звёзд`);
   }
 
   if (ctx.session?.waitingForPromo && id === ADMIN_ID) {
-    const [code, rewardStr] = ctx.message.text.trim().split(/\s+/);
+    const parts = ctx.message.text.trim().split(/\s+/);
+    if (parts.length !== 3) {
+      return ctx.reply('⚠️ Неверный формат. Используйте: `КОД 10 5` (где 10 — звёзды, 5 — количество активаций)', { parse_mode: 'Markdown' });
+    }
+    const [code, rewardStr, activationsStr] = parts;
     const reward = parseInt(rewardStr);
+    const activations = parseInt(activationsStr);
 
-    if (!code || isNaN(reward)) {
-      return ctx.reply('⚠️ Неверный формат. Используйте: `КОД 10`', { parse_mode: 'Markdown' });
+    if (!code || isNaN(reward) || isNaN(activations)) {
+      return ctx.reply('⚠️ Неверный формат. Используйте: `КОД 10 5` (где 10 — звёзды, 5 — количество активаций)', { parse_mode: 'Markdown' });
     }
 
-    db.prepare('INSERT INTO promo_codes (code, reward) VALUES (?, ?)').run(code, reward);
+    db.prepare('INSERT INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)')
+      .run(code, reward, activations, JSON.stringify([]));
+
     ctx.session.waitingForPromo = false;
-    return ctx.reply(`✅ Промокод "${code}" на ${reward} звёзд добавлен.`);
+    return ctx.reply(`✅ Промокод "${code}" на ${reward} звёзд с лимитом активаций ${activations} добавлен.`);
   }
 });
 
