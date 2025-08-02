@@ -129,7 +129,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'withdraw_stars') {
-    return ctx.answerCbQuery('⚙️ Эта функция ещё в разработке. Скоро будет доступна! Спасибо за терпение!.', { show_alert: true });
+    return ctx.answerCbQuery('⚙️ Функция в разработке. Скоро!', { show_alert: true });
   }
 
   if (action === 'leaders') {
