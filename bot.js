@@ -109,17 +109,25 @@ bot.on('callback_query', async (ctx) => {
 
   if (action === 'profile') {
     const invited = db.prepare('SELECT COUNT(*) as count FROM users WHERE referred_by = ?').get(id).count;
-    return ctx.reply(`👤 Профиль:
-🆔 ID: ${user.id}
-💫 Звёзды: ${user.stars}
-👥 Приглашено: ${invited}
-📣 Реф: ${user.referred_by || '—'}`, Markup.inlineKeyboard([
-      [Markup.button.callback('Вывести звезды', 'withdraw_stars')],
+    const referredByUser = user.referred_by ? db.prepare('SELECT username FROM users WHERE id = ?').get(user.referred_by) : null;
+    const referrerName = referredByUser ? `@${referredByUser.username || 'без ника'}` : '—';
+    const displayName = ctx.from.first_name || '—';
+
+    const profileText =
+      `🌟 *Ваш профиль в MagnumTap* 🌟\n\n` +
+      `👤 Имя: *${displayName}*\n` +
+      `🆔 Telegram ID: *${user.id}*\n\n` +
+      `💫 Ваши звёзды: *${user.stars}*\n` +
+      `👥 Приглашено друзей: *${invited}*\n` +
+      `📣 Пригласил: *${referrerName}*\n\n` +
+      `🔥 Используйте звёзды для получения бонусов и участия в акциях!`;
+
+    return ctx.reply(profileText, Markup.inlineKeyboard([
+      [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
       [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
+    ]), { parse_mode: 'Markdown' });
   }
 
-  // Заглушка для кнопки "Вывести звезды"
   if (action === 'withdraw_stars') {
     return ctx.answerCbQuery('Функция вывода звёзд пока не реализована.', { show_alert: true });
   }
