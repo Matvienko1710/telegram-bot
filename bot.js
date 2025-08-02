@@ -130,15 +130,13 @@ bot.on('callback_query', async (ctx) => {
       if (progress >= 10) {
         completed = 1;
         db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(id); // Награда за выполнение задания
-        ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
+        return ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
       } else {
-        ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
+        return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
       }
-      db.prepare('UPDATE users SET daily_task_progress = ?, daily_task_completed = ? WHERE id = ?').run(progress, completed, id);
     } else {
-      return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
+      return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true });
     }
-    return;
   }
 
   if (action === 'bonus') {
