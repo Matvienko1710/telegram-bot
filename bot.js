@@ -17,7 +17,11 @@ function sendWithdrawRequest(ctx, userId, username, amount) {
   const result = insert.run(userId, username, amount, 'pending');
   const withdrawId = result.lastInsertRowid;
 
-  ctx.telegram.sendMessage(WITHDRAW_CHANNEL, `💸 Заявка на вывод\nПользователь: @${username || 'без ника'} (ID: ${userId})\nСумма: ${amount}⭐`, {
+  ctx.telegram.sendMessage(WITHDRAW_CHANNEL, `💸 Заявка на вывод
+👤 Пользователь: @${username || 'без ника'} (ID: ${userId})
+💫 Сумма: ${amount}⭐
+
+🔄 Статус: Ожидает обработки ⚙️`, {
     reply_markup: {
       inline_keyboard: [[
         { text: '✅ Одобрить', callback_data: `approve_withdraw_${withdrawId}` },
@@ -558,21 +562,25 @@ bot.on('message', async (ctx) => {
 });
 
 bot.on('callback_query', async (ctx) => {
-  const data = ctx.update.callback_query.data;
-  const [action, , , withdrawId] = data.split('_'); // используем ID
+  const action = ctx.callbackQuery.data;
 
-  if (action === 'approve' || action === 'reject') {
-    const status = action === 'approve' ? 'approved' : 'rejected';
+  if (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_')) {
+    const requestId = action.split('_')[2];
 
-    const update = db.prepare('UPDATE withdraws SET status = ? WHERE id = ?');
-    const result = update.run(status, withdrawId);
+    const msg = ctx.update.callback_query.message;
+    if (!msg || !msg.text) return ctx.answerCbQuery('❌ Заявка не найдена');
 
-    if (result.changes > 0) {
-      const withdraw = db.prepare('SELECT user_id, amount FROM withdraws WHERE id = ?').get(withdrawId);
-      ctx.telegram.sendMessage(withdraw.user_id, `🔔 Ваша заявка на вывод ${withdraw.amount}⭐ была ${status === 'approved' ? 'одобрена' : 'отклонена'}.`);
-      ctx.reply(`Заявка успешно ${status === 'approved' ? 'одобрена' : 'отклонена'}.`);
-    } else {
-      ctx.reply('⚠️ Заявка не найдена.');
+    const newStatus = action.startsWith('approve') ? '✅ Статус: Одобрено' : '❌ Статус: Отклонено';
+    const newText = msg.text.replace(/🔄 Статус: .+/, newStatus);
+
+    try {
+      await ctx.telegram.editMessageText(msg.chat.id, msg.message_id, undefined, newText, {
+        parse_mode: 'HTML',
+        reply_markup: { inline_keyboard: [] } // удаляем кнопки
+      });
+      await ctx.answerCbQuery('🔔 Статус обновлён');
+    } catch (e) {
+      await ctx.answerCbQuery('❌ Ошибка при обновлении');
     }
   }
 });
