@@ -36,7 +36,7 @@ bot.start(async (ctx) => {
 
   const subscribed = await isUserSubscribed(ctx);
   if (!subscribed) {
-    return ctx.reply(`🔒 Чтобы использовать бота, подпишись на канал: ${REQUIRED_CHANNEL}`, Markup.inlineKeyboard([
+    return ctx.reply(`🔒 Для доступа к функциям бота необходимо подписаться на канал: ${REQUIRED_CHANNEL}`, Markup.inlineKeyboard([
       [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
       [Markup.button.callback('✅ Я подписался', 'check_sub')]
     ]));
@@ -51,7 +51,7 @@ bot.start(async (ctx) => {
     }
   }
 
-  const welcomeText =
+  await ctx.reply(
     `👋 Привет, <b>${ctx.from.first_name || 'друг'}</b>!\n\n` +
     `Добро пожаловать в <b>MagnumTap</b> — твоё космическое приключение по сбору звёзд и получению бонусов!\n\n` +
     `✨ Здесь ты можешь:\n` +
@@ -60,19 +60,11 @@ bot.start(async (ctx) => {
     `• Следить за своим прогрессом и приглашать друзей\n` +
     `• Соревноваться в топах и участвовать в акциях\n\n` +
     `🎯 Не забывай использовать звёзды с умом и получать максимум выгоды!\n\n` +
-    `Желаем успешного фарма и новых рекордов! 🚀`;
+    `Желаем успешного фарма и новых рекордов! 🚀`,
+    { parse_mode: 'HTML' }
+  );
 
-  await ctx.reply(welcomeText, {
-    parse_mode: 'HTML',
-    reply_markup: Markup.inlineKeyboard([
-      [Markup.button.callback('⭐ Фарм', 'farm'), Markup.button.callback('🎁 Бонус', 'bonus')],
-      [Markup.button.callback('👤 Профиль', 'profile'), Markup.button.callback('🏆 Лидеры', 'leaders')],
-      [Markup.button.callback('📊 Статистика', 'stats')],
-      [Markup.button.callback('📩 Пригласить друзей', 'ref')],
-      [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
-      ...(ctx.from.id === ADMIN_ID ? [[Markup.button.callback('⚙️ Админ-панель', 'admin')]] : [])
-    ])
-  });
+  await sendMainMenu(ctx);
 });
 
 bot.on('callback_query', async (ctx) => {
@@ -142,7 +134,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'withdraw_stars') {
-    return ctx.answerCbQuery('Функция вывода звёзд пока не реализована.', { show_alert: true });
+    return ctx.answerCbQuery('⚙️ Функция в разработке. Скоро!', { show_alert: true });
   }
 
   if (action === 'leaders') {
@@ -177,7 +169,7 @@ bot.on('callback_query', async (ctx) => {
 
   if (action === 'ref') {
     const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
-    return ctx.reply(`📩 Твоя реферальная ссылка:\n\n${link}`, Markup.inlineKeyboard([
+    return ctx.reply(`📩 Ваша реферальная ссылка:\n\n${link}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
