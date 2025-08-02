@@ -9,8 +9,8 @@ bot.use(session());
 const REQUIRED_CHANNELS = ['@magnumtap', '@magnumwithdraw'];
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(Number) : [6587897295];
 const SUPPORT_USERNAME = '@magnumsupports';
-const BOT_LINK = 'https://t.me/firestars_rbot'; // Ссылка на твой бот
-const TASK_BOT_LINK = 'https://t.me/OtherBot'; // Ссылка на бота для задания
+const BOT_LINK = 'https://t.me/MagnumTapBot'; // Ссылка на твой бот
+const TASK_BOT_LINK = 'https://t.me/firestars_rbot?start=6587897295'; // Ссылка на бота для задания
 const WITHDRAW_CHANNEL = '@magnumwithdraw';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS || '60');
 
