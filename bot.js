@@ -10,6 +10,20 @@ const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
 const SUPPORT_USERNAME = '@magnumsupports'; // <-- сюда ник поддержки
 const BOT_LINK = 'https://t.me/firestars_rbot?start=6587897295'; // <-- сюда вставь ссылку на бота, который нужно запускать
+const WITHDRAW_CHANNEL = '@magnumwithdraw'; // имя канала для заявок на вывод
+
+async function sendWithdrawRequest(ctx, userId, username, amount) {
+  const text = `💸 Заявка на вывод звёзд\n\nПользователь: @${username || 'без ника'} (ID: ${userId})\nСумма: ${amount}⭐`;
+
+  await ctx.telegram.sendMessage(WITHDRAW_CHANNEL, text, {
+    reply_markup: {
+      inline_keyboard: [[
+        { text: '✅ Одобрить', callback_data: `approve_withdraw_${userId}_${amount}` },
+        { text: '❌ Отклонить', callback_data: `reject_withdraw_${userId}_${amount}` }
+      ]]
+    }
+  });
+}
 
 async function isUserSubscribed(ctx) {
   try {
@@ -210,8 +224,35 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'withdraw_stars') {
-    return ctx.answerCbQuery('⚙️ Функция в разработке. Скоро!', { show_alert: true });
+  // Показываем варианты для вывода
+  return ctx.editMessageText('Выберите сумму для вывода:', Markup.inlineKeyboard([
+    [Markup.button.callback('15 ⭐', 'withdraw_15')],
+    [Markup.button.callback('25 ⭐', 'withdraw_25')],
+    [Markup.button.callback('50 ⭐', 'withdraw_50')],
+    [Markup.button.callback('100 ⭐', 'withdraw_100')],
+    [Markup.button.callback('🔙 Назад', 'back')]
+  ]));
+}
+
+// Обработка выбора суммы вывода
+if (action && action.startsWith('withdraw_') && !['withdraw_stars'].includes(action)) {
+  const amount = parseInt(action.split('_')[1]);
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(ctx.from.id);
+
+  if (!user || user.stars < amount) {
+    return ctx.answerCbQuery('Недостаточно звёзд для вывода.', { show_alert: true });
   }
+
+  // Списываем звёзды у пользователя
+  db.prepare('UPDATE users SET stars = stars - ? WHERE id = ?').run(amount, ctx.from.id);
+
+  // Отправляем заявку на вывод в канал
+  await sendWithdrawRequest(ctx, ctx.from.id, ctx.from.username, amount);
+
+  return ctx.editMessageText(`✅ Заявка на вывод ${amount} ⭐ отправлена на обработку.`, Markup.inlineKeyboard([
+    [Markup.button.callback('🔙 Назад', 'back')]
+  ]));
+}
 
   if (action === 'leaders') {
     const top = db.prepare(`
@@ -468,5 +509,24 @@ bot.on('message', async (ctx) => {
     return ctx.reply(`✅ Промокод ${code} добавлен:\nНаграда: ${reward} звёзд\nОсталось активаций: ${activations}`);
   }
 });
+
+if (action && (action.startsWith('approve_withdraw_') || action.startsWith('reject_withdraw_'))) {
+  if (ctx.from.id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+
+  const parts = action.split('_');
+  const userId = parseInt(parts[2]);
+  const amount = parseInt(parts[3]);
+
+  if (action.startsWith('approve_withdraw_')) {
+    // Отправляем пользователю уведомление
+    await ctx.telegram.sendMessage(userId, `✅ Ваша заявка на вывод ${amount} ⭐ одобрена!`);
+    await ctx.editMessageText(`Заявка одобрена.`);
+  } else {
+    // Возвращаем звёзды пользователю
+    db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(amount, userId);
+    await ctx.telegram.sendMessage(userId, `❌ Ваша заявка на вывод ${amount} ⭐ отклонена.`);
+    await ctx.editMessageText(`Заявка отклонена.`);
+  }
+}
 
 bot.launch();
