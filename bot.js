@@ -112,7 +112,7 @@ bot.use(async (ctx, next) => {
 bot.start(async (ctx) => {
   ctx.session = ctx.session || {};
   ctx.session.currentTaskIndex = 0;
-  ctx.session.waitingForTaskScreenshot = null; // Изменено на null для хранения task_id
+  ctx.session.waitingForTaskScreenshot = null;
   ctx.session.waitingForSupport = false;
   ctx.session.waitingForCode = false;
   ctx.session.waitingForPromo = false;
@@ -395,7 +395,7 @@ bot.on('callback_query', async (ctx) => {
       return;
     }
     const buttons = tickets.map(ticket => {
-      const type = ticket.task_type ? `Заявка (${ticket.task_type})` : 'Тикет';
+      const type = ticket.task_type ? `Заявка (${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'})` : 'Тикет';
       return [
         Markup.button.callback(
           `${type} #${ticket.ticket_id} (@${ticket.username || 'без ника'}, ${ticket.status === 'open' ? 'Открыт' : 'В работе'})`,
@@ -446,7 +446,7 @@ bot.on('callback_query', async (ctx) => {
     if (!ticket || !ticket.file_id) return ctx.answerCbQuery('Файлы не найдены', { show_alert: true });
     const fileIds = JSON.parse(ticket.file_id);
     for (const fileId of fileIds) {
-      await ctx.telegram.sendDocument(id, fileId, { caption: `Файл из ${ticket.task_type ? 'заявки' : 'тикета'} #${ticketId}` });
+      await ctx.telegram.sendPhoto(id, fileId, { caption: `Скриншот из ${ticket.task_type ? 'заявки' : 'тикета'} #${ticketId}` });
     }
     return ctx.answerCbQuery('Файлы отправлены', { show_alert: true });
   }
@@ -620,7 +620,16 @@ bot.on('message', async (ctx) => {
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileId = photo.file_id;
     const description = `Заявка на задание: ${task.type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}`;
-    const info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, 'Загрузка заявки...');
+    let info;
+    try {
+      info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, 'Загрузка заявки...');
+    } catch (error) {
+      console.error('Ошибка отправки сообщения в SUPPORT_CHANNEL:', error);
+      const msg = await ctx.reply('❌ Ошибка при создании заявки. Попробуйте позже.');
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForTaskScreenshot = null;
+      return;
+    }
     db.run(`
       INSERT INTO tickets (user_id, username, description, created_at, file_id, channel_message_id, task_type)
       VALUES (?, ?, ?, ?, ?, ?, ?)
@@ -634,14 +643,23 @@ bot.on('message', async (ctx) => {
       `📎 Файл: 1 шт.\n` +
       `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
       `📌 Статус: Открыт`;
-    await ctx.telegram.editMessageText(
-      SUPPORT_CHANNEL,
-      info.message_id,
-      undefined,
-      ticketText,
-      { parse_mode: 'HTML' }
-    );
-    await ctx.telegram.sendDocument(SUPPORT_CHANNEL, fileId, { caption: `Скриншот для заявки #${ticketId}` });
+    try {
+      await ctx.telegram.editMessageText(
+        SUPPORT_CHANNEL,
+        info.message_id,
+        undefined,
+        ticketText,
+        { parse_mode: 'HTML' }
+      );
+      await ctx.telegram.sendPhoto(SUPPORT_CHANNEL, fileId, { caption: `Скриншот для заявки #${ticketId}` });
+    } catch (error) {
+      console.error('Ошибка отправки фото в SUPPORT_CHANNEL:', error);
+      db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]); // Откат заявки
+      const msg = await ctx.reply('❌ Ошибка при создании заявки. Попробуйте позже.');
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForTaskScreenshot = null;
+      return;
+    }
     await ctx.telegram.sendMessage(ADMIN_IDS[0], `📋 Новая заявка #${ticketId} на задание "${task.type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}" от @${user.username || 'без ника'}`);
     db.run('INSERT OR REPLACE INTO user_tasks (user_id, task_id, progress, completed) VALUES (?, ?, ?, ?)', [id, task.id, 1, 0]);
     const msg = await ctx.reply(`✅ Заявка #${ticketId} на задание отправлена на проверку. Ожидайте ответа администрации.`, Markup.inlineKeyboard([
@@ -662,7 +680,16 @@ bot.on('message', async (ctx) => {
     if (ctx.message.document) {
       fileIds.push(ctx.message.document.file_id);
     }
-    const info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, 'Загрузка тикета...');
+    let info;
+    try {
+      info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, 'Загрузка тикета...');
+    } catch (error) {
+      console.error('Ошибка отправки сообщения в SUPPORT_CHANNEL:', error);
+      const msg = await ctx.reply('❌ Ошибка при создании тикета. Попробуйте позже.');
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForSupport = false;
+      return;
+    }
     db.run(`
       INSERT INTO tickets (user_id, username, description, created_at, file_id, channel_message_id)
       VALUES (?, ?, ?, ?, ?, ?)
@@ -676,17 +703,26 @@ bot.on('message', async (ctx) => {
       `📎 Файлы: ${fileIds.length > 0 ? fileIds.length + ' шт.' : 'Нет'}\n` +
       `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
       `📌 Статус: Открыт`;
-    await ctx.telegram.editMessageText(
-      SUPPORT_CHANNEL,
-      info.message_id,
-      undefined,
-      ticketText,
-      { parse_mode: 'HTML' }
-    );
-    if (fileIds.length > 0) {
-      for (const fileId of fileIds) {
-        await ctx.telegram.sendDocument(SUPPORT_CHANNEL, fileId, { caption: `Файл из тикета #${ticketId}` });
+    try {
+      await ctx.telegram.editMessageText(
+        SUPPORT_CHANNEL,
+        info.message_id,
+        undefined,
+        ticketText,
+        { parse_mode: 'HTML' }
+      );
+      if (fileIds.length > 0) {
+        for (const fileId of fileIds) {
+          await ctx.telegram.sendPhoto(SUPPORT_CHANNEL, fileId, { caption: `Скриншот из тикета #${ticketId}` });
+        }
       }
+    } catch (error) {
+      console.error('Ошибка отправки в SUPPORT_CHANNEL:', error);
+      db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]); // Откат тикета
+      const msg = await ctx.reply('❌ Ошибка при создании тикета. Попробуйте позже.');
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForSupport = false;
+      return;
     }
     await ctx.telegram.sendMessage(ADMIN_IDS[0], `📞 Новый тикет #${ticketId} от @${user.username || 'без ника'}`);
     const msg = await ctx.reply(`✅ Тикет #${ticketId} создан.`, Markup.inlineKeyboard([
@@ -809,7 +845,7 @@ bot.on('message', async (ctx) => {
         );
         if (fileIds.length > 0) {
           for (const fileId of fileIds) {
-            await ctx.telegram.sendDocument(SUPPORT_CHANNEL, fileId, { caption: `Файл к ответу #${ticketId}` });
+            await ctx.telegram.sendPhoto(SUPPORT_CHANNEL, fileId, { caption: `Скриншот к ответу #${ticketId}` });
           }
         }
       } catch (error) {
@@ -823,7 +859,7 @@ bot.on('message', async (ctx) => {
     deleteNotification(ctx, userMsg.message_id);
     if (fileIds.length > 0) {
       for (const fileId of fileIds) {
-        await ctx.telegram.sendDocument(ticket.user_id, fileId, { caption: `Файл к ответу #${ticketId}` });
+        await ctx.telegram.sendPhoto(ticket.user_id, fileId, { caption: `Скриншот к ответу #${ticketId}` });
       }
     }
     const replyMsg = await ctx.reply(`✅ Ответ на тикет #${ticketId} отправлен.`, Markup.inlineKeyboard([
