@@ -2,7 +2,7 @@ const { Telegraf, Markup, session } = require('telegraf');
 const dayjs = require('dayjs');
 require('dotenv').config();
 
-const db = require('./database'); // Изменено на './database' для соответствия вашему импорту
+const db = require('./db'); // Fixed from './database' to './db'
 const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
@@ -155,10 +155,10 @@ bot.on('callback_query', async (ctx) => {
         return ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
       } else {
         db.prepare('UPDATE users SET daily_task_progress = ?, daily_task_completed = ? WHERE id = ?').run(progress, completed, id);
-        return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true }); // Изменено на show_alert: true
+        return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true }); // Changed to show_alert: true
       }
     } else {
-      return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true }); // Изменено на show_alert: true
+      return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true }); // Changed to show_alert: true
     }
   }
 
@@ -388,7 +388,7 @@ bot.on('callback_query', async (ctx) => {
       `📌 Статус: ${ticket.status === 'open' ? 'Открыт' : ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}`;
 
     const buttons = [
-      [Markup.button.callback('✍️ Ответить', `reply_ticket_${ticketId}`)],
+      [Markup.button callback('✍️ Ответить', `reply_ticket_${ticketId}`)],
       [Markup.button.callback('🔄 В работе', `set_ticket_status_${ticketId}_in_progress`)],
       [Markup.button.callback('✅ Закрыть', `set_ticket_status_${ticketId}_closed`)],
     ];
@@ -404,7 +404,7 @@ bot.on('callback_query', async (ctx) => {
   if (action.startsWith('view_files_')) {
     const ticketId = parseInt(action.split('_')[2]);
     const ticket = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId);
-    if (!ticket || !ticket.file_id) return ctx.answerCbQuery('Файлы не найдены', { show_alert: true });
+    if (!ticket || ticket.file_id) return ctx.answerCbQuery('Файлы не найдены', { show_alert: true });
 
     const fileIds = JSON.parse(ticket.file_id);
     for (const fileId of fileIds) {
@@ -464,7 +464,7 @@ bot.on('callback_query', async (ctx) => {
         const updatedText =
           `📞 Тикет #${ticket.ticket_id}\n` +
           `👤 Пользователь: @${ticket.username || 'без ника'}\n` +
-          `🆔 User ID: ${ticket.user_id}\n` +
+          `�ID User ID: ${ticket.user_id}\n` +
           `📝 Описание: ${ticket.description}\n` +
           `📅 Создан: ${ticket.created_at}\n` +
           `📌 Статус: ${ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}`;
