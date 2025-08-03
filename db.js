@@ -1,8 +1,12 @@
 const Database = require('better-sqlite3');
 const path = require('path');
 
-// Инициализация базы данных
-const db = new Database(path.join(__dirname, 'database.db'), { verbose: console.log });
+// Используем путь, совместимый с Railway
+const dbPath = process.env.RAILWAY_VOLUME_MOUNT_PATH 
+  ? path.join(process.env.RAILWAY_VOLUME_MOUNT_PATH, 'database.db')
+  : path.join(__dirname, 'database.db');
+
+const db = new Database(dbPath, { verbose: console.log });
 
 // Создание таблицы users
 db.exec(`
@@ -31,5 +35,18 @@ db.exec(`
   )
 `);
 
-// Экспорт объекта базы данных
+// Создание таблицы tickets
+db.exec(`
+  CREATE TABLE IF NOT EXISTS tickets (
+    ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    user_id INTEGER,
+    username TEXT,
+    description TEXT,
+    status TEXT DEFAULT 'open', -- open, in_progress, closed
+    created_at TEXT,
+    file_id TEXT, -- JSON array of file IDs
+    FOREIGN KEY (user_id) REFERENCES users(id)
+  )
+`);
+
 module.exports = db;
