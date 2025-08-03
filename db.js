@@ -1,11 +1,15 @@
 const Database = require('better-sqlite3');
+const path = require('path');
 
 let db;
 
 // Инициализация базы данных
 function initializeDatabase() {
   try {
-    db = new Database('database.db', { verbose: console.log });
+    db = new Database(path.resolve(__dirname, 'database.db'), { verbose: (msg) => console.log(`[SQLite] ${msg}`) });
+
+    // Проверка целостности базы данных
+    db.prepare('PRAGMA integrity_check').run();
 
     // Таблица users: хранит информацию о пользователях
     db.prepare(`
@@ -50,10 +54,10 @@ function initializeDatabase() {
     db.prepare(`
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT UNIQUE,
-        description TEXT,
-        goal INTEGER,
-        reward INTEGER
+        type TEXT UNIQUE NOT NULL,
+        description TEXT NOT NULL,
+        goal INTEGER NOT NULL,
+        reward INTEGER NOT NULL
       )
     `).run();
 
@@ -70,38 +74,66 @@ function initializeDatabase() {
       )
     `).run();
 
+    // Создание индексов для оптимизации запросов
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_user_tasks_user_id ON user_tasks(user_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_tickets_user_id ON tickets(user_id)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)').run();
+
     console.log('База данных инициализирована успешно.');
   } catch (error) {
-    console.error('Ошибка инициализации базы данных:', error);
+    console.error('Ошибка инициализации базы данных:', error.message);
     process.exit(1);
   }
 }
 
-// Экспорт базы данных
+// Экспорт методов
 module.exports = {
-  prepare: (query) => db.prepare(query),
+  prepare: (query) => {
+    try {
+      return db.prepare(query);
+    } catch (error) {
+      console.error(`Ошибка подготовки запроса: ${query}`, error.message);
+      throw error;
+    }
+  },
   run: (query, params = []) => {
-    // Приведение числовых параметров к целым числам
-    const normalizedParams = params.map(param => 
-      typeof param === 'number' && Number.isFinite(param) ? Math.floor(param) : param
-    );
-    return db.prepare(query).run(normalizedParams);
+    try {
+      return db.prepare(query).run(params);
+    } catch (error) {
+      console.error(`Ошибка выполнения запроса: ${query}`, { params, error: error.message });
+      throw error;
+    }
   },
   get: (query, params = []) => {
-    // Приведение числовых параметров к целым числам
-    const normalizedParams = params.map(param => 
-      typeof param === 'number' && Number.isFinite(param) ? Math.floor(param) : param
-    );
-    return db.prepare(query).get(normalizedParams);
+    try {
+      return db.prepare(query).get(params);
+    } catch (error) {
+      console.error(`Ошибка получения записи: ${query}`, { params, error: error.message });
+      throw error;
+    }
   },
   all: (query, params = []) => {
-    // Приведение числовых параметров к целым числам
-    const normalizedParams = params.map(param => 
-      typeof param === 'number' && Number.isFinite(param) ? Math.floor(param) : param
-    );
-    return db.prepare(query).all(normalizedParams);
+    try {
+      return db.prepare(query).all(params);
+    } catch (error) {
+      console.error(`Ошибка получения записей: ${query}`, { params, error: error.message });
+      throw error;
+    }
   },
 };
 
 // Инициализация при загрузке модуля
 initializeDatabase();
+
+// Закрытие базы данных при завершении процесса
+process.on('SIGINT', () => {
+  try {
+    db.close();
+    console.log('База данных закрыта.');
+    process.exit(0);
+  } catch (error) {
+    console.error('Ошибка закрытия базы данных:', error.message);
+    process.exit(1);
+  }
+});
