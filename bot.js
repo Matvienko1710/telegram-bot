@@ -9,7 +9,7 @@ bot.use(session());
 // Ссылки и настройки из .env
 const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@YourMainChannel'; // Обязательный канал для запуска бота
 const TASK_CHANNEL = process.env.TASK_CHANNEL || '@YourTaskChannel'; // Канал для задания "Подписаться на канал"
-const TASK_BOT_LINK = process.env.TASK_BOT_LINK || `https://t.me/${process.env.BOT_NAME || 'firestars_rbot'}`; // Реферальная ссылка для задания "Запустить бота"
+const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot?start=6587897295'; // Реферальная ссылка для задания "Запустить бота"
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(id => parseInt(id)) : [6587897295]; // Список ID администраторов
 const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@YourSupportChannel'; // Канал для тикетов и заявок
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS) || 60; // Кулдаун фарма в секундах
@@ -111,7 +111,7 @@ bot.start(async (ctx) => {
 
   await ctx.reply(
     `👋 Привет, <b>${ctx.from.first_name || 'друг'}</b>!\n\n` +
-    `Добро пожаловать в <b>FIRE STARS</b>!\n\n` +
+    `Добро пожаловать в <b>MagnumTap</b>!\n\n` +
     `✨ Здесь ты можешь:\n` +
     `• Зарабатывать звёзды (Фарм)\n` +
     `• Получать бонусы\n` +
@@ -623,7 +623,7 @@ bot.on('message', async (ctx) => {
     const ticketText =
       `📋 Заявка #${ticketId}\n` +
       `👤 Пользователь: @${user.username || 'без ника'}\n` +
-      `�ID: ${id}\n` +
+      `🆔 ID: ${id}\n` +
       `📝 Задание: ${task.description}\n` +
       `📎 Файлы: 1 шт.\n` +
       `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
@@ -671,7 +671,7 @@ bot.on('message', async (ctx) => {
     const ticketText =
       `📞 Тикет #${ticketId}\n` +
       `👤 Пользователь: @${user.username || 'без ника'}\n` +
-      `�ID: ${id}\n` +
+      `🆔 ID: ${id}\n` +
       `📝 Описание: ${description}\n` +
       `📎 Файлы: ${fileIds.length > 0 ? fileIds.length + ' шт.' : 'Нет'}\n` +
       `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
