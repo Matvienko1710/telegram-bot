@@ -8,7 +8,7 @@ bot.use(session());
 
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
-const SUPPORT_USERNAME = '@magnumsupports'; // <-- сюда ник поддержки
+const SUPPORT_CHANNEL = '@MagnumSupportTickets'; // Канал для тикетов
 
 // Middleware для проверки регистрации пользователя
 bot.use(async (ctx, next) => {
@@ -76,7 +76,6 @@ bot.start(async (ctx) => {
     }
   }
 
-  // Проверка и выдача ежедневного задания
   const day = dayjs().format('YYYY-MM-DD');
   let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 
@@ -133,13 +132,12 @@ bot.on('callback_query', async (ctx) => {
 
     db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, id);
 
-    // Обновляем прогресс задания farm_10
     if (user.daily_task_type === 'farm_10' && !user.daily_task_completed) {
       let progress = user.daily_task_progress + 1;
       let completed = 0;
       if (progress >= 10) {
         completed = 1;
-        db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(id); // Награда за выполнение задания
+        db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(id);
         ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
       } else {
         ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
@@ -165,7 +163,6 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'daily_tasks') {
-    // Показываем текущее задание
     const tasks = {
       farm_10: { description: 'Соберите 10 звёзд фармом', goal: 10, reward: 10 },
       invite_1: { description: 'Пригласите 1 друга', goal: 1, reward: 15 },
@@ -213,9 +210,27 @@ bot.on('callback_query', async (ctx) => {
 
     return ctx.reply(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
-      [Markup.button.url('📞 Связаться с поддержкой', `https://t.me/${SUPPORT_USERNAME.replace('@', '')}`)],
+      [Markup.button.callback('📞 Связаться с поддержкой', 'support')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
+  }
+
+  if (action === 'support') {
+    ctx.session = ctx.session || {};
+    ctx.session.waitingForSupport = true;
+    return ctx.reply('📞 Опишите вашу проблему. Вы можете прикрепить фото или документ для пояснения.', {
+      reply_markup: {
+        inline_keyboard: [
+          [Markup.button.callback('🚫 Отменить', 'cancel_support')]
+        ]
+      }
+    });
+  }
+
+  if (action === 'cancel_support') {
+    ctx.session.waitingForSupport = false;
+    await ctx.deleteMessage();
+    return sendMainMenu(ctx);
   }
 
   if (action === 'withdraw_stars') {
@@ -272,6 +287,7 @@ bot.on('callback_query', async (ctx) => {
       [Markup.button.callback('🏆 Топ', 'admin_top')],
       [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
       [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
+      [Markup.button.callback('📞 Тикеты поддержки', 'admin_tickets')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
   }
@@ -279,7 +295,13 @@ bot.on('callback_query', async (ctx) => {
   if (action === 'admin_stats') {
     const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
     const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
-    return ctx.answerCbQuery(`👥 Юзеров: ${total}, ⭐ Звёзд: ${totalStars}`, { show_alert: true });
+    const openTickets = db.prepare('SELECT COUNT(*) as count FROM tickets WHERE status = ?').get('open').count;
+    const inProgressTickets = db.prepare('SELECT COUNT(*) as count FROM tickets WHERE status = ?').get('in_progress').count;
+    const closedTickets = db.prepare('SELECT COUNT(*) as count FROM tickets WHERE status = ?').get('closed').count;
+    return ctx.answerCbQuery(
+      `👥 Юзеров: ${total}\n⭐ Звёзд: ${totalStars}\n📞 Тикетов: Открыто: ${openTickets}, В работе: ${inProgressTickets}, Закрыто: ${closedTickets}`,
+      { show_alert: true }
+    );
   }
 
   if (action === 'admin_top') {
@@ -300,23 +322,145 @@ bot.on('callback_query', async (ctx) => {
     return ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
   }
 
+  if (action === 'admin_tickets') {
+    const tickets = db.prepare('SELECT * FROM tickets WHERE status != ? ORDER BY created_at DESC LIMIT 10').all('closed');
+    if (tickets.length === 0) {
+      return ctx.reply('📞 Нет открытых или в работе тикетов.', Markup.inlineKeyboard([
+        [Markup.button.callback('🔙 Назад', 'back')]
+      ]));
+    }
+
+    const buttons = tickets.map(ticket => [
+      Markup.button.callback(
+        `Тикет #${ticket.ticket_id} (@${ticket.username || 'без ника'}, ${ticket.status === 'open' ? 'Открыт' : 'В работе'})`,
+        `ticket_${ticket.ticket_id}`
+      )
+    ]);
+    buttons.push([Markup.button.callback('🔙 Назад', 'back')]);
+
+    return ctx.reply('📞 Список тикетов:', Markup.inlineKeyboard(buttons));
+  }
+
+  if (action.startsWith('ticket_')) {
+    const ticketId = parseInt(action.split('_')[1]);
+    const ticket = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId);
+    if (!ticket) return ctx.answerCbQuery('Тикет не найден', { show_alert: true });
+
+    const fileIds = ticket.file_id ? JSON.parse(ticket.file_id) : [];
+    let fileText = fileIds.length > 0 ? `📎 Файлы: ${fileIds.length} шт.` : '📎 Файлов нет';
+
+    const ticketText =
+      `📞 Тикет #${ticket.ticket_id}\n` +
+      `👤 Пользователь: @${ticket.username || 'без ника'}\n` +
+      `🆔 User ID: ${ticket.user_id}\n` +
+      `📝 Описание: ${ticket.description}\n` +
+      `${fileText}\n` +
+      `📅 Создан: ${ticket.created_at}\n` +
+      `📌 Статус: ${ticket.status === 'open' ? 'Открыт' : ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}`;
+
+    const buttons = [
+      [Markup.button.callback('✍️ Ответить', `reply_ticket_${ticketId}`)],
+      [Markup.button.callback('🔄 В работе', `set_ticket_status_${ticketId}_in_progress`)],
+      [Markup.button.callback('✅ Закрыть', `set_ticket_status_${ticketId}_closed`)],
+    ];
+    if (fileIds.length > 0) {
+      buttons.unshift([Markup.button.callback('📎 Просмотреть файлы', `view_files_${ticketId}`)]);
+    }
+    buttons.push([Markup.button.callback('🔙 Назад', 'admin_tickets')]);
+
+    return ctx.editMessageText(ticketText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+  }
+
+  if (action.startsWith('view_files_')) {
+    const ticketId = parseInt(action.split('_')[2]);
+    const ticket = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId);
+    if (!ticket || !ticket.file_id) return ctx.answerCbQuery('Файлы не найдены', { show_alert: true });
+
+    const fileIds = JSON.parse(ticket.file_id);
+    for (const fileId of fileIds) {
+      await ctx.telegram.sendDocument(id, fileId, { caption: `Файл из тикета #${ticketId}` });
+    }
+    return ctx.answerCbQuery('Файлы отправлены', { show_alert: true });
+  }
+
+  if (action.startsWith('reply_ticket_')) {
+    const ticketId = parseInt(action.split('_')[2]);
+    ctx.session = ctx.session || {};
+    ctx.session.waitingForTicketReply = ticketId;
+    return ctx.reply(`✍️ Введите ответ для тикета #${ticketId}:`);
+  }
+
+  if (action.startsWith('set_ticket_status_')) {
+    const [_, ticketId, status] = action.split('_');
+    db.prepare('UPDATE tickets SET status = ? WHERE ticket_id = ?').run(status, ticketId);
+    const ticket = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId);
+    await ctx.telegram.sendMessage(
+      ticket.user_id,
+      `📞 Ваш тикет #${ticketId} обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
+    );
+    await ctx.telegram.sendMessage(
+      SUPPORT_CHANNEL,
+      `📞 Тикет #${ticketId} (@${ticket.username || 'без ника'}) обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
+    );
+    return ctx.answerCbQuery(`Статус тикета #${ticketId} изменён на "${status === 'in_progress' ? 'В работе' : 'Закрыт'}"`, { show_alert: true });
+  }
+
   if (action === 'back') {
     await ctx.deleteMessage();
     return sendMainMenu(ctx);
   }
 });
 
-// Обработка промокодов и рассылки
 bot.on('message', async (ctx) => {
   const id = ctx.from.id;
   let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
 
-  // Проверка, существует ли пользователь
   if (!user) {
     ctx.session.waitingForCode = false;
     ctx.session.broadcast = false;
     ctx.session.waitingForPromo = false;
+    ctx.session.waitingForSupport = false;
     return ctx.reply('❌ Пользователь не найден. Пожалуйста, начните с команды /start.');
+  }
+
+  if (ctx.session?.waitingForSupport) {
+    const description = ctx.message.text || 'Без описания';
+    const fileIds = [];
+
+    if (ctx.message.photo) {
+      const photo = ctx.message.photo[ctx.message.photo.length - 1]; // Берем фото с самым высоким качеством
+      fileIds.push(photo.file_id);
+    }
+    if (ctx.message.document) {
+      fileIds.push(ctx.message.document.file_id);
+    }
+
+    const ticketId = db.prepare(`
+      INSERT INTO tickets (user_id, username, description, created_at, file_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(id, user.username || 'без ника', description, dayjs().toISOString(), JSON.stringify(fileIds)).lastInsertRowid;
+
+    const ticketText =
+      `📞 Новый тикет #${ticketId}\n` +
+      `👤 Пользователь: @${user.username || 'без ника'}\n` +
+      `🆔 User ID: ${id}\n` +
+      `📝 Описание: ${description}\n` +
+      `📎 Файлы: ${fileIds.length > 0 ? fileIds.length + ' шт.' : 'Нет'}\n` +
+      `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
+      `📌 Статус: Открыт`;
+
+    await ctx.telegram.sendMessage(SUPPORT_CHANNEL, ticketText);
+    if (fileIds.length > 0) {
+      for (const fileId of fileIds) {
+        await ctx.telegram.sendDocument(SUPPORT_CHANNEL, fileId, { caption: `Файл из тикета #${ticketId}` });
+      }
+    }
+
+    await ctx.telegram.sendMessage(ADMIN_ID, `📞 Новый тикет #${ticketId} от @${user.username || 'без ника'}`);
+    ctx.session.waitingForSupport = false;
+    return ctx.reply(`✅ Тикет #${ticketId} создан. Мы ответим вам скоро!`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
   }
 
   if (ctx.session?.broadcast && id === ADMIN_ID) {
@@ -353,14 +497,12 @@ bot.on('message', async (ctx) => {
 
     db.prepare('UPDATE users SET stars = stars + ? WHERE id = ?').run(promo.reward, id);
 
-    // Обновляем оставшиеся активации и список использовавших
     usedBy.push(id);
     const newActivationsLeft = promo.activations_left - 1;
 
     db.prepare('UPDATE promo_codes SET activations_left = ?, used_by = ? WHERE code = ?')
       .run(newActivationsLeft, JSON.stringify(usedBy), code);
 
-    // Обновляем прогресс задания promo_use
     if (user.daily_task_type === 'promo_use' && !user.daily_task_completed) {
       db.prepare('UPDATE users SET daily_task_progress = 1, daily_task_completed = 1, stars = stars + ? WHERE id = ?').run(20, id);
       ctx.reply(`🎉 Задание "Активируйте промокод" выполнено! +20 звёзд`);
@@ -389,6 +531,45 @@ bot.on('message', async (ctx) => {
     ctx.session.waitingForPromo = false;
     return ctx.reply(`✅ Промокод "${code}" на ${reward} звёзд с лимитом активаций ${activations} добавлен.`);
   }
+
+  if (ctx.session?.waitingForTicketReply && id === ADMIN_ID) {
+    const ticketId = ctx.session.waitingForTicketReply;
+    const ticket = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId);
+    if (!ticket) {
+      ctx.session.waitingForTicketReply = false;
+      return ctx.reply('❌ Тикет не найден.');
+    }
+
+    const replyText = ctx.message.text || 'Без текста';
+    const fileIds = [];
+    if (ctx.message.photo) {
+      const photo = ctx.message.photo[ctx.message.photo.length - 1];
+      fileIds.push(photo.file_id);
+    }
+    if (ctx.message.document) {
+      fileIds.push(ctx.message.document.file_id);
+    }
+
+    await ctx.telegram.sendMessage(
+      ticket.user_id,
+      `📞 Ответ на тикет #${ticketId}:\n${replyText}`
+    );
+    if (fileIds.length > 0) {
+      for (const fileId of fileIds) {
+        await ctx.telegram.sendDocument(ticket.user_id, fileId, { caption: `Файл к ответу на тикет #${ticketId}` });
+      }
+    }
+
+    await ctx.telegram.sendMessage(
+      SUPPORT_CHANNEL,
+      `📞 Ответ на тикет #${ticketId} (@${ticket.username || 'без ника'}):\n${replyText}\n📎 Файлы: ${fileIds.length > 0 ? fileIds.length + ' шт.' : 'Нет'}`
+    );
+
+    ctx.session.waitingForTicketReply = false;
+    return ctx.reply(`✅ Ответ на тикет #${ticketId} отправлен.`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 К тикетам', 'admin_tickets')]
+    ]));
+  }
 });
 
 function registerUser(ctx) {
@@ -407,7 +588,6 @@ function registerUser(ctx) {
   }
 }
 
-// Проверка BOT_TOKEN перед запуском
 if (!process.env.BOT_TOKEN) {
   console.error('Ошибка: BOT_TOKEN не задан в переменных окружения!');
   process.exit(1);
