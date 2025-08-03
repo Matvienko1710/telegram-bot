@@ -388,7 +388,7 @@ bot.on('callback_query', async (ctx) => {
       `📌 Статус: ${ticket.status === 'open' ? 'Открыт' : ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}`;
 
     const buttons = [
-      [Markup.button callback('✍️ Ответить', `reply_ticket_${ticketId}`)],
+      [Markup.button.callback('✍️ Ответить', `reply_ticket_${ticketId}`)],
       [Markup.button.callback('🔄 В работе', `set_ticket_status_${ticketId}_in_progress`)],
       [Markup.button.callback('✅ Закрыть', `set_ticket_status_${ticketId}_closed`)],
     ];
