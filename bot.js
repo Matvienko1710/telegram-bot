@@ -427,19 +427,37 @@ bot.on('callback_query', async (ctx) => {
       return ctx.answerCbQuery('Ошибка при получении тикета', { show_alert: true });
     }
 
-    // Отправляем уведомления
+    // Обновляем сообщение в канале
+    if (ticket.channel_message_id) {
+      try {
+        const updatedText =
+          `📞 Тикет #${ticket.ticket_id}\n` +
+          `👤 Пользователь: @${ticket.username || 'без ника'}\n` +
+          `🆔 User ID: ${ticket.user_id}\n` +
+          `📝 Описание: ${ticket.description}\n` +
+          `📅 Создан: ${ticket.created_at}\n` +
+          `📌 Статус: ${ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}`;
+        await ctx.telegram.editMessageText(
+          SUPPORT_CHANNEL,
+          ticket.channel_message_id,
+          undefined,
+          updatedText,
+          { parse_mode: 'HTML' }
+        );
+      } catch (error) {
+        console.error('Error editing channel message:', error);
+      }
+    }
+
+    // Отправляем уведомление пользователю
     try {
       await ctx.telegram.sendMessage(
         ticket.user_id,
         `📞 Ваш тикет #${ticketId} обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
       );
-      await ctx.telegram.sendMessage(
-        SUPPORT_CHANNEL,
-        `📞 Тикет #${ticketId} (@${ticket.username || 'без ника'}) обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
-      );
       return ctx.answerCbQuery(`Статус тикета #${ticketId} изменён на "${status === 'in_progress' ? 'В работе' : 'Закрыт'}"`, { show_alert: true });
     } catch (error) {
-      console.error('Error sending notifications for ticket:', ticketId, error);
+      console.error('Error sending user notification:', error);
       return ctx.answerCbQuery('Ошибка при отправке уведомлений', { show_alert: true });
     }
   }
@@ -474,13 +492,15 @@ bot.on('message', async (ctx) => {
       fileIds.push(ctx.message.document.file_id);
     }
 
-    const ticketId = db.prepare(`
-      INSERT INTO tickets (user_id, username, description, created_at, file_id)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(id, user.username || 'без ника', description, dayjs().toISOString(), JSON.stringify(fileIds)).lastInsertRowid;
+    const ticketStmt = db.prepare(`
+      INSERT INTO tickets (user_id, username, description, created_at, file_id, channel_message_id)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    const info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, 'Загрузка тикета...'); // Временное сообщение
+    const ticketId = ticketStmt.run(id, user.username || 'без ника', description, dayjs().toISOString(), JSON.stringify(fileIds), info.message_id).lastInsertRowid;
 
     const ticketText =
-      `📞 Новый тикет #${ticketId}\n` +
+      `📞 Тикет #${ticketId}\n` +
       `👤 Пользователь: @${user.username || 'без ника'}\n` +
       `🆔 User ID: ${id}\n` +
       `📝 Описание: ${description}\n` +
@@ -488,7 +508,13 @@ bot.on('message', async (ctx) => {
       `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
       `📌 Статус: Открыт`;
 
-    await ctx.telegram.sendMessage(SUPPORT_CHANNEL, ticketText);
+    await ctx.telegram.editMessageText(
+      SUPPORT_CHANNEL,
+      info.message_id,
+      undefined,
+      ticketText,
+      { parse_mode: 'HTML' }
+    );
     if (fileIds.length > 0) {
       for (const fileId of fileIds) {
         await ctx.telegram.sendDocument(SUPPORT_CHANNEL, fileId, { caption: `Файл из тикета #${ticketId}` });
@@ -589,6 +615,35 @@ bot.on('message', async (ctx) => {
       fileIds.push(ctx.message.document.file_id);
     }
 
+    // Обновляем сообщение в канале с ответом
+    if (ticket.channel_message_id) {
+      try {
+        const updatedText =
+          `📞 Тикет #${ticket.ticket_id}\n` +
+          `👤 Пользователь: @${ticket.username || 'без ника'}\n` +
+          `🆔 User ID: ${ticket.user_id}\n` +
+          `📝 Описание: ${ticket.description}\n` +
+          `📅 Создан: ${ticket.created_at}\n` +
+          `📌 Статус: ${ticket.status}\n` +
+          `\n✍️ Ответ: ${replyText}`;
+        await ctx.telegram.editMessageText(
+          SUPPORT_CHANNEL,
+          ticket.channel_message_id,
+          undefined,
+          updatedText,
+          { parse_mode: 'HTML' }
+        );
+        if (fileIds.length > 0) {
+          for (const fileId of fileIds) {
+            await ctx.telegram.sendDocument(SUPPORT_CHANNEL, fileId, { caption: `Файл к ответу на тикет #${ticketId}` });
+          }
+        }
+      } catch (error) {
+        console.error('Error editing channel message with reply:', error);
+      }
+    }
+
+    // Отправляем уведомление пользователю
     await ctx.telegram.sendMessage(
       ticket.user_id,
       `📞 Ответ на тикет #${ticketId}:\n${replyText}`
@@ -598,11 +653,6 @@ bot.on('message', async (ctx) => {
         await ctx.telegram.sendDocument(ticket.user_id, fileId, { caption: `Файл к ответу на тикет #${ticketId}` });
       }
     }
-
-    await ctx.telegram.sendMessage(
-      SUPPORT_CHANNEL,
-      `📞 Ответ на тикет #${ticketId} (@${ticket.username || 'без ника'}):\n${replyText}\n📎 Файлы: ${fileIds.length > 0 ? fileIds.length + ' шт.' : 'Нет'}`
-    );
 
     ctx.session.waitingForTicketReply = false;
     return ctx.reply(`✅ Ответ на тикет #${ticketId} отправлен.`, Markup.inlineKeyboard([
