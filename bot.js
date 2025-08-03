@@ -10,6 +10,16 @@ const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
 const SUPPORT_USERNAME = '@magnumsupports'; // <-- сюда ник поддержки
 
+// Middleware для проверки регистрации пользователя
+bot.use(async (ctx, next) => {
+  const id = ctx.from.id;
+  const user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+  if (!user && ctx.updateType !== 'message' && ctx.message?.text !== '/start') {
+    return ctx.reply('❌ Пожалуйста, начните с команды /start.');
+  }
+  return next();
+});
+
 async function isUserSubscribed(ctx) {
   try {
     const status = await ctx.telegram.getChatMember(REQUIRED_CHANNEL, ctx.from.id);
@@ -182,8 +192,6 @@ bot.on('callback_query', async (ctx) => {
     ]) });
   }
 
-  // Остальная логика без изменений
-
   if (['profile', 'leaders', 'stats', 'ref'].includes(action)) {
     await ctx.deleteMessage();
   }
@@ -301,6 +309,15 @@ bot.on('callback_query', async (ctx) => {
 // Обработка промокодов и рассылки
 bot.on('message', async (ctx) => {
   const id = ctx.from.id;
+  let user = db.prepare('SELECT * FROM users WHERE id = ?').get(id);
+
+  // Проверка, существует ли пользователь
+  if (!user) {
+    ctx.session.waitingForCode = false;
+    ctx.session.broadcast = false;
+    ctx.session.waitingForPromo = false;
+    return ctx.reply('❌ Пользователь не найден. Пожалуйста, начните с команды /start.');
+  }
 
   if (ctx.session?.broadcast && id === ADMIN_ID) {
     const users = db.prepare('SELECT id FROM users').all();
@@ -390,4 +407,10 @@ function registerUser(ctx) {
   }
 }
 
-bot.launch().then(() => console.log('🤖 Бот запущен!'));
+// Проверка BOT_TOKEN перед запуском
+if (!process.env.BOT_TOKEN) {
+  console.error('Ошибка: BOT_TOKEN не задан в переменных окружения!');
+  process.exit(1);
+}
+
+bot.launch().then(() => console.log('🤖 Бот запущен!')).catch(err => console.error('Ошибка запуска бота:', err));
