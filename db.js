@@ -74,11 +74,12 @@ function initializeDatabase() {
       )
     `).run();
 
-    // Создание индексов для оптимизации запросов
+    // Создание индексов для оптимизации
     db.prepare('CREATE INDEX IF NOT EXISTS idx_user_tasks_user_id ON user_tasks(user_id)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_tickets_user_id ON tickets(user_id)').run();
     db.prepare('CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)').run();
+    db.prepare('CREATE INDEX IF NOT EXISTS idx_tickets_task_type ON tickets(task_type)').run();
 
     console.log('База данных инициализирована успешно.');
   } catch (error) {
