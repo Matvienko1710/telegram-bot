@@ -8,7 +8,7 @@ bot.use(session());
 
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
-const SUPPORT_CHANNEL = '@magnumsupported'; // Канал для тикетов
+const SUPPORT_CHANNEL = '@MagnumSupportTickets'; // Канал для тикетов
 
 // Middleware для проверки регистрации пользователя
 bot.use(async (ctx, next) => {
@@ -391,9 +391,33 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action.startsWith('set_ticket_status_')) {
-    const [_, ticketId, status] = action.split('_');
-    db.prepare('UPDATE tickets SET status = ? WHERE ticket_id = ?').run(status, ticketId);
+    console.log('Processing set_ticket_status action:', action); // Отладочный лог
+    const parts = action.split('_');
+    if (parts.length < 4) {
+      console.error('Invalid action format:', action);
+      return ctx.answerCbQuery('Ошибка: неверный формат действия', { show_alert: true });
+    }
+    const ticketId = parseInt(parts[2]);
+    const status = parts[3];
+    console.log('Parsed ticketId:', ticketId, 'status:', status); // Отладочный лог
+
+    if (!ticketId || !['in_progress', 'closed'].includes(status)) {
+      console.error('Invalid ticketId or status:', ticketId, status);
+      return ctx.answerCbQuery('Ошибка: неверный ID тикета или статус', { show_alert: true });
+    }
+
+    const updateResult = db.prepare('UPDATE tickets SET status = ? WHERE ticket_id = ?').run(status, ticketId);
+    if (updateResult.changes === 0) {
+      console.error('No ticket found for ticketId:', ticketId);
+      return ctx.answerCbQuery('Тикет не найден', { show_alert: true });
+    }
+
     const ticket = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId);
+    if (!ticket) {
+      console.error('Failed to retrieve ticket after update:', ticketId);
+      return ctx.answerCbQuery('Ошибка при получении тикета', { show_alert: true });
+    }
+
     await ctx.telegram.sendMessage(
       ticket.user_id,
       `📞 Ваш тикет #${ticketId} обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
@@ -428,7 +452,7 @@ bot.on('message', async (ctx) => {
     const fileIds = [];
 
     if (ctx.message.photo) {
-      const photo = ctx.message.photo[ctx.message.photo.length - 1]; // Берем фото с самым высоким качеством
+      const photo = ctx.message.photo[ctx.message.photo.length - 1];
       fileIds.push(photo.file_id);
     }
     if (ctx.message.document) {
