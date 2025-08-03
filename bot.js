@@ -1,3 +1,8 @@
+if (!process.env.BOT_TOKEN) {
+  console.error('Ошибка: BOT_TOKEN не задан!');
+  process.exit(1);
+}
+
 const { Telegraf, Markup, session } = require('telegraf');
 const dayjs = require('dayjs');
 require('dotenv').config();
@@ -7,17 +12,17 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
 // Ссылки и настройки из .env
-const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@YourMainChannel'; // Обязательный канал для запуска бота
-const TASK_CHANNEL = process.env.TASK_CHANNEL || '@YourTaskChannel'; // Канал для задания "Подписаться на канал"
-const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot?start=6587897295'; // Реферальная ссылка для задания "Запустить бота"
-const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(id => parseInt(id)) : [6587897295]; // Список ID администраторов
-const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@YourSupportChannel'; // Канал для тикетов и заявок
-const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS) || 60; // Кулдаун фарма в секундах
-const MESSAGE_TTL = 15_000; // Время жизни уведомлений (15 секунд)
+const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@YourMainChannel';
+const TASK_CHANNEL = process.env.TASK_CHANNEL || '@YourTaskChannel';
+const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot?start=6587897295';
+const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(id => parseInt(id)) : [6587897295];
+const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@YourSupportChannel';
+const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS) || 60;
+const MESSAGE_TTL = 15_000;
 
 // Функция для удаления уведомлений
 async function deleteNotification(ctx, messageId) {
-  if (messageId) {
+  if (messageId && Number.isInteger(messageId)) {
     setTimeout(() => {
       ctx.telegram.deleteMessage(ctx.chat.id, messageId).catch((err) => {
         console.error('Ошибка удаления уведомления:', err);
@@ -26,24 +31,28 @@ async function deleteNotification(ctx, messageId) {
   }
 }
 
-// Middleware для проверки регистрации пользователя
-bot.use(async (ctx, next) => {
-  const id = ctx.from.id;
-  const user = db.get('SELECT * FROM users WHERE id = ?', [id]);
-  if (!user && ctx.updateType !== 'message' && ctx.message?.text !== '/start') {
-    return ctx.reply('❌ Пожалуйста, начните с команды /start.');
-  }
-  return next();
-});
-
 // Проверка подписки на обязательный канал
 async function isUserSubscribed(ctx) {
   try {
     const status = await ctx.telegram.getChatMember(REQUIRED_CHANNEL, ctx.from.id);
     return ['member', 'creator', 'administrator'].includes(status.status);
-  } catch {
+  } catch (err) {
+    console.error('Ошибка проверки подписки:', err);
     return false;
   }
+}
+
+// Вспомогательная функция для получения топа пользователей
+function getTopUsers(limit = 10) {
+  return db.all(`
+    SELECT 
+      u.username, 
+      u.stars, 
+      (SELECT COUNT(*) FROM users WHERE referred_by = u.id) AS referrals 
+    FROM users u 
+    ORDER BY u.stars DESC 
+    LIMIT ?
+  `, [limit]);
 }
 
 // Главное меню
@@ -65,8 +74,8 @@ function sendMainMenu(ctx) {
 // Инициализация заданий
 function initTasks() {
   const initialTasks = [
-    { type: 'subscribe_channel', description: `Подпишитесь на канал ${TASK_CHANNEL} и отправьте скриншот`, goal: 1, reward: 10 },
-    { type: 'start_bot', description: `Запустите бота по ссылке ${TASK_BOT_LINK} и отправьте скриншот`, goal: 1, reward: 5 },
+    { type: 'subscribe_channel', description: 'Подписаться', goal: 1, reward: 10 },
+    { type: 'start_bot', description: 'Запустить бота', goal: 1, reward: 5 },
   ];
 
   initialTasks.forEach(task => {
@@ -84,7 +93,28 @@ function initTasks() {
 
 initTasks();
 
+// Middleware для проверки регистрации пользователя
+bot.use(async (ctx, next) => {
+  ctx.session = ctx.session || {};
+  const id = ctx.from.id;
+  const user = db.get('SELECT * FROM users WHERE id = ?', [id]);
+  if (!user && ctx.updateType !== 'message' && ctx.message?.text !== '/start') {
+    return ctx.reply('❌ Пожалуйста, начните с команды /start.');
+  }
+  return next();
+});
+
+// Обработчик команды /start
 bot.start(async (ctx) => {
+  ctx.session = ctx.session || {};
+  ctx.session.currentTaskIndex = 0;
+  ctx.session.waitingForTaskScreenshot = false;
+  ctx.session.waitingForSupport = false;
+  ctx.session.waitingForCode = false;
+  ctx.session.waitingForPromo = false;
+  ctx.session.waitingForTicketReply = false;
+  ctx.session.broadcast = false;
+
   const id = ctx.from.id;
   const username = ctx.from.username || '';
   const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
@@ -124,7 +154,9 @@ bot.start(async (ctx) => {
   await sendMainMenu(ctx);
 });
 
+// Обработчик callback-запросов
 bot.on('callback_query', async (ctx) => {
+  ctx.session = ctx.session || {};
   const id = ctx.from.id;
   const now = Date.now();
   const action = ctx.callbackQuery.data;
@@ -168,44 +200,46 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'tasks') {
+    ctx.session.currentTaskIndex = ctx.session.currentTaskIndex || 0;
+
     const tasks = db.all('SELECT * FROM tasks');
-    const userTasks = db.all('SELECT task_id, progress, completed FROM user_tasks WHERE user_id = ?', [id]);
+    if (tasks.length === 0) {
+      await ctx.editMessageText('📋 Нет доступных заданий.', {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 Назад', 'back')]])
+      });
+      return;
+    }
 
-    let buttons = tasks.map(task => {
-      const userTask = userTasks.find(ut => ut.task_id === task.id) || { progress: 0, completed: 0 };
-      return [
-        Markup.button.callback(
-          `${task.description} ${userTask.completed ? '✅' : userTask.progress > 0 ? '⏳ На проверке' : ''}`,
-          `submit_task_${task.type}`
-        )
-      ];
-    });
-    buttons.push([Markup.button.callback('🔙 Назад', 'back')]);
+    const taskIndex = ctx.session.currentTaskIndex % tasks.length;
+    const task = tasks[taskIndex];
+    const userTask = db.get('SELECT * FROM user_tasks WHERE user_id = ? AND task_id = ?', [id, task.id]) || { progress: 0, completed: 0 };
 
-    await ctx.editMessageText('📋 <b>Задания</b> 📋\n\nВыберите задание для отправки скриншота:', {
+    const taskStatus = userTask.completed ? '✅' : userTask.progress > 0 ? '⏳ На проверке' : '';
+    const buttons = [
+      [Markup.button.callback(task.description, `submit_task_${task.type}`)],
+      [Markup.button.callback('➡️ Следующее задание', 'next_task')],
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ];
+
+    await ctx.editMessageText(`📋 <b>Задание</b>\n\n${task.description} ${taskStatus}`, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard(buttons)
     });
     return;
   }
 
-  if (action.startsWith('submit_task_')) {
-    const taskType = action.split('_')[2];
-    const task = db.get('SELECT id, description FROM tasks WHERE type = ?', [taskType]);
-    if (!task) return ctx.answerCbQuery('Задание не найдено', { show_alert: true });
-
-    const userTask = db.get('SELECT * FROM user_tasks WHERE user_id = ? AND task_id = ?', [id, task.id]);
-    if (userTask && userTask.completed) {
-      return ctx.answerCbQuery('✅ Задание уже выполнено!', { show_alert: true });
-    }
-    if (userTask && userTask.progress > 0) {
-      return ctx.answerCbQuery('⏳ Заявка на это задание уже на проверке!', { show_alert: true });
-    }
-
-    ctx.session = ctx.session || {};
-    ctx.session.waitingForTaskScreenshot = taskType;
-    await ctx.reply(`📸 Отправьте скриншот для задания: ${task.description}`);
+  if (action === 'next_task') {
+    ctx.session.currentTaskIndex = (ctx.session.currentTaskIndex || 0) + 1;
+    await ctx.deleteMessage();
+    await ctx.reply('📋 Выберите задание:', Markup.inlineKeyboard([
+      [Markup.button.callback('📋 Задания', 'tasks')]
+    ]));
     return;
+  }
+
+  if (action.startsWith('submit_task_')) {
+    return ctx.answerCbQuery('❌ Задание не найдено', { show_alert: true });
   }
 
   if (['profile', 'leaders', 'stats', 'ref'].includes(action)) {
@@ -236,7 +270,6 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'support') {
-    ctx.session = ctx.session || {};
     ctx.session.waitingForSupport = true;
     await ctx.reply('📞 Опишите проблему (можно прикрепить фото/документ).', {
       reply_markup: {
@@ -258,16 +291,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'leaders') {
-    const top = db.all(`
-      SELECT 
-        u.username, 
-        u.stars, 
-        (SELECT COUNT(*) FROM users WHERE referred_by = u.id) AS referrals 
-      FROM users u 
-      ORDER BY u.stars DESC 
-      LIMIT 10
-    `);
-
+    const top = getTopUsers();
     const list = top.map((u, i) => 
       `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐ — приглашено: ${u.referrals}`
     ).join('\n');
@@ -296,7 +320,6 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'enter_code') {
-    ctx.session = ctx.session || {};
     ctx.session.waitingForCode = true;
     const msg = await ctx.reply('💬 Введите промокод:');
     deleteNotification(ctx, msg.message_id);
@@ -331,21 +354,21 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin_top') {
-    const top = db.all('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10');
+    const top = getTopUsers();
     const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
-    await ctx.reply(`🏆 Топ 10:\n\n${list}`);
+    await ctx.reply(`🏆 Топ 10:\n\n${list}`, Markup.inlineKeyboard([
+      [Markup.button.callback('🔙 Назад', 'back')]
+    ]));
     return;
   }
 
   if (action === 'admin_broadcast') {
-    ctx.session = ctx.session || {};
     ctx.session.broadcast = true;
     await ctx.reply('✏️ Введите текст рассылки:');
     return;
   }
 
   if (action === 'admin_addcode') {
-    ctx.session = ctx.session || {};
     ctx.session.waitingForPromo = true;
     const msg = await ctx.reply('✏️ Введите промокод, звёзды и активации (пример: `CODE123 10 5`):', { parse_mode: 'Markdown' });
     deleteNotification(ctx, msg.message_id);
@@ -513,7 +536,6 @@ bot.on('callback_query', async (ctx) => {
 
   if (action.startsWith('reply_ticket_')) {
     const ticketId = parseInt(action.split('_')[2]);
-    ctx.session = ctx.session || {};
     ctx.session.waitingForTicketReply = ticketId;
     await ctx.reply(`✍️ Введите ответ для тикета #${ticketId}:`);
     return;
@@ -572,7 +594,9 @@ bot.on('callback_query', async (ctx) => {
   }
 });
 
+// Обработчик сообщений
 bot.on('message', async (ctx) => {
+  ctx.session = ctx.session || {};
   const id = ctx.from.id;
   let user = db.get('SELECT * FROM users WHERE id = ?', [id]);
 
@@ -587,65 +611,9 @@ bot.on('message', async (ctx) => {
   }
 
   if (ctx.session?.waitingForTaskScreenshot) {
-    const taskType = ctx.session.waitingForTaskScreenshot;
-    const task = db.get('SELECT id, description FROM tasks WHERE type = ?', [taskType]);
-    if (!task) {
-      ctx.session.waitingForTaskScreenshot = false;
-      return ctx.reply('❌ Задание не найдено.');
-    }
-
-    const userTask = db.get('SELECT * FROM user_tasks WHERE user_id = ? AND task_id = ?', [id, task.id]);
-    if (userTask && userTask.completed) {
-      ctx.session.waitingForTaskScreenshot = false;
-      return ctx.reply('✅ Задание уже выполнено!');
-    }
-    if (userTask && userTask.progress > 0) {
-      ctx.session.waitingForTaskScreenshot = false;
-      return ctx.reply('⏳ Заявка на это задание уже на проверке!');
-    }
-
-    if (!ctx.message.photo) {
-      const msg = await ctx.reply('📸 Пожалуйста, отправьте скриншот.');
-      deleteNotification(ctx, msg.message_id);
-      return;
-    }
-
-    const fileId = ctx.message.photo[ctx.message.photo.length - 1].file_id;
-    const description = ctx.message.caption || `Заявка на задание: ${task.description}`;
-
-    const info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, 'Загрузка заявки...');
-    db.run(`
-      INSERT INTO tickets (user_id, username, description, created_at, file_id, channel_message_id, task_type, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `, [id, user.username || 'без ника', description, dayjs().toISOString(), JSON.stringify([fileId]), info.message_id, taskType, 'open']);
-
-    const ticketId = db.get('SELECT last_insert_rowid() as id').id;
-    const ticketText =
-      `📋 Заявка #${ticketId}\n` +
-      `👤 Пользователь: @${user.username || 'без ника'}\n` +
-      `🆔 ID: ${id}\n` +
-      `📝 Задание: ${task.description}\n` +
-      `📎 Файлы: 1 шт.\n` +
-      `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
-      `📌 Статус: Открыт`;
-
-    await ctx.telegram.editMessageText(
-      SUPPORT_CHANNEL,
-      info.message_id,
-      undefined,
-      ticketText,
-      { parse_mode: 'HTML' }
-    );
-    await ctx.telegram.sendDocument(SUPPORT_CHANNEL, fileId, { caption: `Скриншот для заявки #${ticketId}` });
-
-    await ctx.telegram.sendMessage(ADMIN_IDS[0], `📋 Новая заявка #${ticketId} на задание "${taskType}" от @${user.username || 'без ника'}`);
-    db.run('INSERT OR REPLACE INTO user_tasks (user_id, task_id, progress, completed) VALUES (?, ?, ?, ?)', [id, task.id, 1, 0]);
-
-    const msg = await ctx.reply(`✅ Заявка #${ticketId} на задание отправлена на проверку.`, Markup.inlineKeyboard([
-      [Markup.button.callback('🔙 Назад', 'back')]
-    ]));
-    deleteNotification(ctx, msg.message_id);
     ctx.session.waitingForTaskScreenshot = false;
+    const msg = await ctx.reply('❌ Отправка скриншотов не требуется для этого задания.');
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
@@ -849,6 +817,7 @@ bot.on('message', async (ctx) => {
   }
 });
 
+// Функция регистрации пользователя
 function registerUser(ctx) {
   const id = ctx.from.id;
   const username = ctx.from.username || '';
@@ -865,9 +834,5 @@ function registerUser(ctx) {
   }
 }
 
-if (!process.env.BOT_TOKEN) {
-  console.error('Ошибка: BOT_TOKEN не задан!');
-  process.exit(1);
-}
-
+// Запуск бота
 bot.launch().then(() => console.log('🤖 Бот запущен!')).catch(err => console.error('Ошибка запуска:', err));
