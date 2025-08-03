@@ -393,40 +393,54 @@ bot.on('callback_query', async (ctx) => {
   if (action.startsWith('set_ticket_status_')) {
     console.log('Processing set_ticket_status action:', action); // Отладочный лог
     const parts = action.split('_');
-    if (parts.length < 4) {
-      console.error('Invalid action format:', action);
+    console.log('Split parts:', parts); // Отладочный лог для анализа массива
+    if (parts.length !== 4) {
+      console.error('Invalid action format, expected 4 parts, got:', parts.length, 'parts:', parts);
       return ctx.answerCbQuery('Ошибка: неверный формат действия', { show_alert: true });
     }
-    const ticketId = parseInt(parts[2]);
+    const ticketIdStr = parts[2]; // Берем строку перед преобразованием
+    const ticketId = parseInt(ticketIdStr, 10); // Явное преобразование
     const status = parts[3];
-    console.log('Parsed ticketId:', ticketId, 'status:', status); // Отладочный лог
+    console.log('Parsed ticketIdStr:', ticketIdStr, 'ticketId:', ticketId, 'status:', status); // Отладочный лог
 
-    if (!ticketId || !['in_progress', 'closed'].includes(status)) {
-      console.error('Invalid ticketId or status:', ticketId, status);
+    if (isNaN(ticketId) || !['in_progress', 'closed'].includes(status)) {
+      console.error('Invalid ticketId or status:', ticketId, status, 'from parts:', parts);
       return ctx.answerCbQuery('Ошибка: неверный ID тикета или статус', { show_alert: true });
     }
 
-    const updateResult = db.prepare('UPDATE tickets SET status = ? WHERE ticket_id = ?').run(status, ticketId);
+    // Выполняем обновление статуса
+    const updateStmt = db.prepare('UPDATE tickets SET status = ? WHERE ticket_id = ?');
+    const updateResult = updateStmt.run(status, ticketId);
+    console.log('Update result:', updateResult); // Отладочный лог
+
     if (updateResult.changes === 0) {
       console.error('No ticket found for ticketId:', ticketId);
       return ctx.answerCbQuery('Тикет не найден', { show_alert: true });
     }
 
-    const ticket = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId);
+    // Получаем обновлённый тикет
+    const ticketStmt = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?');
+    const ticket = ticketStmt.get(ticketId);
     if (!ticket) {
       console.error('Failed to retrieve ticket after update:', ticketId);
       return ctx.answerCbQuery('Ошибка при получении тикета', { show_alert: true });
     }
 
-    await ctx.telegram.sendMessage(
-      ticket.user_id,
-      `📞 Ваш тикет #${ticketId} обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
-    );
-    await ctx.telegram.sendMessage(
-      SUPPORT_CHANNEL,
-      `📞 Тикет #${ticketId} (@${ticket.username || 'без ника'}) обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
-    );
-    return ctx.answerCbQuery(`Статус тикета #${ticketId} изменён на "${status === 'in_progress' ? 'В работе' : 'Закрыт'}"`, { show_alert: true });
+    // Отправляем уведомления
+    try {
+      await ctx.telegram.sendMessage(
+        ticket.user_id,
+        `📞 Ваш тикет #${ticketId} обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
+      );
+      await ctx.telegram.sendMessage(
+        SUPPORT_CHANNEL,
+        `📞 Тикет #${ticketId} (@${ticket.username || 'без ника'}) обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
+      );
+      return ctx.answerCbQuery(`Статус тикета #${ticketId} изменён на "${status === 'in_progress' ? 'В работе' : 'Закрыт'}"`, { show_alert: true });
+    } catch (error) {
+      console.error('Error sending notifications for ticket:', ticketId, error);
+      return ctx.answerCbQuery('Ошибка при отправке уведомлений', { show_alert: true });
+    }
   }
 
   if (action === 'back') {
