@@ -8,8 +8,8 @@ bot.use(session());
 
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
-const SUPPORT_CHANNEL = '@MagnumSupportTickets'; // Канал для тикетов
-const MESSAGE_TTL = 30_000; // Время жизни уведомлений в миллисекундах (30 секунд)
+const SUPPORT_CHANNEL = '@magnumsupported'; // Канал для тикетов
+const MESSAGE_TTL = 15_000; // Время жизни уведомлений в миллисекундах (30 секунд)
 
 async function deleteNotification(ctx, messageId) {
   if (messageId) {
