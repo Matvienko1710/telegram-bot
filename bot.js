@@ -91,6 +91,7 @@ function initTasks() {
         task.goal,
         task.reward
       ]);
+      console.log(`Задание "${task.type}" создано с описанием "${task.description}"`);
     }
   });
 }
@@ -425,7 +426,7 @@ bot.on('callback_query', async (ctx) => {
       `📌 Статус: ${ticket.status === 'open' ? 'Открыт' : ticket.status === 'in_progress' ? 'В работе' : ticket.status === 'approved' ? 'Одобрено' : 'Отклонено'}`;
     const buttons = [];
     if (ticket.task_type) {
-      buttons.push([Markup.button.callback('✅ Одобрить', `approve_task_${ticket.ticket_id}_${ticket.task_type}`)]);
+      buttons.push([Markup.button.callback('✅ Одобрить', `approve_task_${ticket.ticket_id}`)]);
       buttons.push([Markup.button.callback('❌ Отклонить', `reject_task_${ticket.ticket_id}`)]);
     } else {
       buttons.push([Markup.button.callback('✍️ Ответить', `reply_ticket_${ticket.ticket_id}`)]);
@@ -452,11 +453,15 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action.startsWith('approve_task_')) {
-    const [_, __, ticketId, taskType] = action.split('_');
+    const ticketId = parseInt(action.split('_')[2]);
     const ticket = db.get('SELECT * FROM tickets WHERE ticket_id = ?', [ticketId]);
     if (!ticket) return ctx.answerCbQuery('Заявка не найдена', { show_alert: true });
-    const task = db.get('SELECT id, reward FROM tasks WHERE type = ?', [taskType]);
-    if (!task) return ctx.answerCbQuery('Задание не найдено', { show_alert: true });
+    console.log(`Попытка одобрения заявки #${ticketId}, task_type: ${ticket.task_type}`);
+    const task = db.get('SELECT id, reward FROM tasks WHERE type = ?', [ticket.task_type]);
+    if (!task) {
+      console.log(`Задание с type "${ticket.task_type}" не найдено в таблице tasks`);
+      return ctx.answerCbQuery('❌ Задание не найдено', { show_alert: true });
+    }
     db.run('UPDATE tickets SET status = ? WHERE ticket_id = ?', ['approved', ticketId]);
     db.run('INSERT OR REPLACE INTO user_tasks (user_id, task_id, progress, completed) VALUES (?, ?, ?, ?)', [ticket.user_id, task.id, 1, 1]);
     db.run('UPDATE users SET stars = stars + ? WHERE id = ?', [task.reward, ticket.user_id]);
@@ -483,7 +488,7 @@ bot.on('callback_query', async (ctx) => {
     }
     await ctx.telegram.sendMessage(
       ticket.user_id,
-      `📋 Заявка #${ticketId} на задание "${taskType === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}" одобрена! Вы получили ${task.reward} звёзд.`
+      `📋 Заявка #${ticketId} на задание "${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}" одобрена! Вы получили ${task.reward} звёзд.`
     );
     await ctx.answerCbQuery(`✅ Заявка #${ticketId} одобрена`, { show_alert: true });
     await ctx.deleteMessage().catch(() => {});
@@ -498,7 +503,10 @@ bot.on('callback_query', async (ctx) => {
     const ticket = db.get('SELECT * FROM tickets WHERE ticket_id = ?', [ticketId]);
     if (!ticket) return ctx.answerCbQuery('Заявка не найдена', { show_alert: true });
     db.run('UPDATE tickets SET status = ? WHERE ticket_id = ?', ['rejected', ticketId]);
-    db.run('DELETE FROM user_tasks WHERE user_id = ? AND task_id = ?', [ticket.user_id, db.get('SELECT id FROM tasks WHERE type = ?', [ticket.task_type]).id]);
+    const task = db.get('SELECT id FROM tasks WHERE type = ?', [ticket.task_type]);
+    if (task) {
+      db.run('DELETE FROM user_tasks WHERE user_id = ? AND task_id = ?', [ticket.user_id, task.id]);
+    }
     if (ticket.channel_message_id) {
       try {
         const updatedText =
