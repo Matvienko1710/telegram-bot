@@ -8,7 +8,7 @@ bot.use(session());
 
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
-const SUPPORT_CHANNEL = '@magnumsupported'; // Канал для тикетов
+const SUPPORT_CHANNEL = '@MagnumSupportTickets'; // Канал для тикетов
 
 // Middleware для проверки регистрации пользователя
 bot.use(async (ctx, next) => {
@@ -394,14 +394,15 @@ bot.on('callback_query', async (ctx) => {
     console.log('Processing set_ticket_status action:', action); // Отладочный лог
     const parts = action.split('_');
     console.log('Split parts:', parts); // Отладочный лог для анализа массива
-    if (parts.length !== 4) {
-      console.error('Invalid action format, expected 4 parts, got:', parts.length, 'parts:', parts);
+    if (parts.length < 4) {
+      console.error('Invalid action format, too few parts:', parts.length, 'parts:', parts);
       return ctx.answerCbQuery('Ошибка: неверный формат действия', { show_alert: true });
     }
-    const ticketIdStr = parts[2]; // Берем строку перед преобразованием
+    const ticketIdStr = parts[3]; // ticketId теперь в parts[3], так как первые 3 части — префикс
     const ticketId = parseInt(ticketIdStr, 10); // Явное преобразование
-    const status = parts[3];
-    console.log('Parsed ticketIdStr:', ticketIdStr, 'ticketId:', ticketId, 'status:', status); // Отладочный лог
+    const statusParts = parts.slice(4); // Собираем status из оставшихся частей
+    const status = statusParts.join('_'); // Объединяем с подчёркиваниями
+    console.log('Parsed ticketIdStr:', ticketIdStr, 'ticketId:', ticketId, 'statusParts:', statusParts, 'status:', status); // Отладочный лог
 
     if (isNaN(ticketId) || !['in_progress', 'closed'].includes(status)) {
       console.error('Invalid ticketId or status:', ticketId, status, 'from parts:', parts);
