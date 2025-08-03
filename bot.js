@@ -9,7 +9,7 @@ bot.use(session());
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
 const SUPPORT_CHANNEL = '@magnumsupported'; // Канал для тикетов
-const MESSAGE_TTL = 10_000; // Время жизни уведомлений в миллисекундах (30 секунд)
+const MESSAGE_TTL = 30_000; // Время жизни уведомлений в миллисекундах (30 секунд)
 
 async function deleteNotification(ctx, messageId) {
   if (messageId) {
@@ -297,7 +297,8 @@ bot.on('callback_query', async (ctx) => {
   if (action === 'enter_code') {
     ctx.session = ctx.session || {};
     ctx.session.waitingForCode = true;
-    await ctx.reply('💬 Введите промокод:');
+    const msg = await ctx.reply('💬 Введите промокод:');
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
@@ -343,7 +344,8 @@ bot.on('callback_query', async (ctx) => {
   if (action === 'admin_addcode') {
     ctx.session = ctx.session || {};
     ctx.session.waitingForPromo = true;
-    await ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
+    const msg = await ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
