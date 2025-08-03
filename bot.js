@@ -8,7 +8,7 @@ bot.use(session());
 
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
-const SUPPORT_CHANNEL = '@magnumsupported'; // Канал для тикетов
+const SUPPORT_CHANNEL = '@MagnumSupportTickets'; // Канал для тикетов
 const MESSAGE_TTL = 30_000; // Время жизни уведомлений в миллисекундах (30 секунд)
 
 async function deleteNotification(ctx, messageId) {
@@ -140,7 +140,7 @@ bot.on('callback_query', async (ctx) => {
     const cooldown = 60 * 1000;
     if (now - user.last_farm < cooldown) {
       const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
-      return ctx.answerCbQuery(`⏳ Подождите ${seconds} сек.`, { show_alert: true });
+      return ctx.answerCbQuery(`⏳ Подождите ${seconds} сек. до следующего фарма`, { show_alert: true });
     }
 
     db.prepare('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?').run(now, id);
