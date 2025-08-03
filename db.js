@@ -8,6 +8,13 @@ function initializeDatabase() {
     db = new Database('database.db', { verbose: console.log });
 
     // Создание таблицы users
+    // Поля:
+    // - id: уникальный ID пользователя (Telegram ID)
+    // - username: имя пользователя в Telegram
+    // - stars: количество звёзд
+    // - last_farm: время последнего фарма (в миллисекундах)
+    // - last_bonus: время последнего бонуса (ISO строка)
+    // - referred_by: ID пользователя, пригласившего (если есть)
     db.prepare(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
@@ -16,15 +23,16 @@ function initializeDatabase() {
         last_farm INTEGER DEFAULT 0,
         last_bonus TEXT,
         referred_by INTEGER,
-        daily_task_type TEXT,
-        daily_task_progress INTEGER DEFAULT 0,
-        daily_task_completed INTEGER DEFAULT 0,
-        daily_task_date TEXT,
         FOREIGN KEY (referred_by) REFERENCES users(id)
       )
     `).run();
 
     // Создание таблицы promo_codes
+    // Поля:
+    // - code: уникальный код промокода
+    // - reward: награда в звёздах
+    // - activations_left: оставшееся количество активаций
+    // - used_by: JSON-массив ID пользователей, использовавших промокод
     db.prepare(`
       CREATE TABLE IF NOT EXISTS promo_codes (
         code TEXT PRIMARY KEY,
@@ -34,18 +42,62 @@ function initializeDatabase() {
       )
     `).run();
 
-    // Создание таблицы tickets с новым полем channel_message_id
+    // Создание таблицы tickets
+    // Поля:
+    // - ticket_id: уникальный ID тикета
+    // - user_id: ID пользователя
+    // - username: имя пользователя
+    // - description: описание проблемы
+    // - status: статус тикета (open, in_progress, closed)
+    // - created_at: время создания (ISO строка)
+    // - file_id: JSON-массив ID файлов
+    // - channel_message_id: ID сообщения в канале поддержки
     db.prepare(`
       CREATE TABLE IF NOT EXISTS tickets (
         ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
         description TEXT,
-        status TEXT DEFAULT 'open', -- open, in_progress, closed
+        status TEXT DEFAULT 'open',
         created_at TEXT,
-        file_id TEXT, -- JSON array of file IDs
-        channel_message_id INTEGER, -- ID сообщения в канале
+        file_id TEXT,
+        channel_message_id INTEGER,
         FOREIGN KEY (user_id) REFERENCES users(id)
+      )
+    `).run();
+
+    // Создание таблицы tasks
+    // Поля:
+    // - id: уникальный ID задания
+    // - type: уникальный тип задания (например, 'subscribe_channel')
+    // - description: описание задания для отображения
+    // - goal: количество действий для выполнения
+    // - reward: награда в звёздах
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS tasks (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT UNIQUE,
+        description TEXT,
+        goal INTEGER,
+        reward INTEGER
+      )
+    `).run();
+
+    // Создание таблицы user_tasks
+    // Поля:
+    // - user_id: ID пользователя
+    // - task_id: ID задания из таблицы tasks
+    // - progress: текущий прогресс (например, 1 из 1 для подписки)
+    // - completed: 1, если задание выполнено, иначе 0
+    db.prepare(`
+      CREATE TABLE IF NOT EXISTS user_tasks (
+        user_id INTEGER,
+        task_id INTEGER,
+        progress INTEGER DEFAULT 0,
+        completed INTEGER DEFAULT 0,
+        PRIMARY KEY (user_id, task_id),
+        FOREIGN KEY (user_id) REFERENCES users(id),
+        FOREIGN KEY (task_id) REFERENCES tasks(id)
       )
     `).run();
 
@@ -59,7 +111,7 @@ function initializeDatabase() {
 // Экспорт базы данных
 module.exports = {
   prepare: (query) => db.prepare(query),
-  run: (query, params) => db.run(query, params),
+  run: (query, params) => db.prepare(query).run(params),
   get: (query, params) => db.prepare(query).get(params),
   all: (query, params) => db.prepare(query).all(params),
 };
