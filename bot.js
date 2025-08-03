@@ -9,13 +9,13 @@ bot.use(session());
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
 const SUPPORT_CHANNEL = '@magnumsupported'; // Канал для тикетов
-const MESSAGE_TTL = 30_000; // Время жизни сообщения в миллисекундах (30 секунд)
+const MESSAGE_TTL = 10_000; // Время жизни уведомлений в миллисекундах (30 секунд)
 
-async function deleteMessage(ctx, messageId) {
+async function deleteNotification(ctx, messageId) {
   if (messageId) {
     setTimeout(() => {
       ctx.telegram.deleteMessage(ctx.chat.id, messageId).catch((err) => {
-        console.error('Ошибка удаления сообщения:', err);
+        console.error('Ошибка удаления уведомления:', err);
       });
     }, MESSAGE_TTL);
   }
@@ -76,7 +76,6 @@ bot.start(async (ctx) => {
       [Markup.button.url('📢 Подписаться', `https://t.me/${REQUIRED_CHANNEL.replace('@', '')}`)],
       [Markup.button.callback('✅ Я подписался', 'check_sub')]
     ]));
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
@@ -103,7 +102,7 @@ bot.start(async (ctx) => {
     user.daily_task_completed = 0;
   }
 
-  const welcomeMsg = await ctx.reply(
+  await ctx.reply(
     `👋 Привет, <b>${ctx.from.first_name || 'друг'}</b>!\n\n` +
     `Добро пожаловать в <b>MagnumTap</b> — твоё космическое приключение по сбору звёзд и получению бонусов!\n\n` +
     `✨ Здесь ты можешь:\n` +
@@ -115,10 +114,8 @@ bot.start(async (ctx) => {
     `Желаем успешного фарма и новых рекордов! 🚀`,
     { parse_mode: 'HTML' }
   );
-  deleteMessage(ctx, welcomeMsg.message_id);
 
-  const menuMsg = await sendMainMenu(ctx);
-  deleteMessage(ctx, menuMsg.message_id);
+  await sendMainMenu(ctx);
 });
 
 bot.on('callback_query', async (ctx) => {
@@ -135,8 +132,7 @@ bot.on('callback_query', async (ctx) => {
       return ctx.answerCbQuery('❌ Подписка не найдена!', { show_alert: true });
     }
     registerUser(ctx);
-    const msg = await sendMainMenu(ctx);
-    deleteMessage(ctx, msg.message_id);
+    await sendMainMenu(ctx);
     return;
   }
 
@@ -155,9 +151,9 @@ bot.on('callback_query', async (ctx) => {
       if (progress >= 10) {
         completed = 1;
         db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(id);
-        ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
+        return ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
       } else {
-        ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
+        return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
       }
       db.prepare('UPDATE users SET daily_task_progress = ?, daily_task_completed = ? WHERE id = ?').run(progress, completed, id);
     } else {
@@ -176,9 +172,7 @@ bot.on('callback_query', async (ctx) => {
     }
 
     db.prepare('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?').run(nowDay.toISOString(), id);
-    const msg = await ctx.answerCbQuery('🎉 Вы получили ежедневный бонус: +5 звёзд!', { show_alert: true });
-    deleteMessage(ctx, msg.message_id); // Удаляем только если есть message_id
-    return;
+    return ctx.answerCbQuery('🎉 Вы получили ежедневный бонус: +5 звёзд!', { show_alert: true });
   }
 
   if (action === 'daily_tasks') {
@@ -203,10 +197,9 @@ bot.on('callback_query', async (ctx) => {
       text += `🚀 Выполните задание, чтобы получить награду: +${task.reward} звёзд.`;
     }
 
-    const msg = await ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
+    await ctx.editMessageText(text, { parse_mode: 'HTML', ...Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]) });
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
@@ -229,34 +222,31 @@ bot.on('callback_query', async (ctx) => {
       `📣 Пригласил: ${referrerName}\n\n` +
       `🔥 Используйте звёзды для получения бонусов и участия в акциях!`;
 
-    const msg = await ctx.reply(profileText, Markup.inlineKeyboard([
+    await ctx.reply(profileText, Markup.inlineKeyboard([
       [Markup.button.callback('Вывести звёзды', 'withdraw_stars')],
       [Markup.button.callback('📞 Связаться с поддержкой', 'support')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
   if (action === 'support') {
     ctx.session = ctx.session || {};
     ctx.session.waitingForSupport = true;
-    const msg = await ctx.reply('📞 Опишите вашу проблему. Вы можете прикрепить фото или документ для пояснения.', {
+    await ctx.reply('📞 Опишите вашу проблему. Вы можете прикрепить фото или документ для пояснения.', {
       reply_markup: {
         inline_keyboard: [
           [Markup.button.callback('🚫 Отменить', 'cancel_support')]
         ]
       }
     });
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
   if (action === 'cancel_support') {
     ctx.session.waitingForSupport = false;
     await ctx.deleteMessage();
-    const msg = await sendMainMenu(ctx);
-    deleteMessage(ctx, msg.message_id);
+    await sendMainMenu(ctx);
     return;
   }
 
@@ -279,45 +269,41 @@ bot.on('callback_query', async (ctx) => {
       `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐ — приглашено: ${u.referrals}`
     ).join('\n');
 
-    const msg = await ctx.reply(`🏆 Топ 10 игроков:\n\n${list}`, Markup.inlineKeyboard([
+    await ctx.reply(`🏆 Топ 10 игроков:\n\n${list}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
   if (action === 'stats') {
     const total = db.prepare('SELECT COUNT(*) as count FROM users').get().count;
     const totalStars = db.prepare('SELECT SUM(stars) as stars FROM users').get().stars || 0;
-    const msg = await ctx.reply(`📊 Статистика:
+    await ctx.reply(`📊 Статистика:
 👥 Пользователей: ${total}
 ⭐ Всего звёзд: ${totalStars}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
   if (action === 'ref') {
     const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
-    const msg = await ctx.reply(`📩 Ваша реферальная ссылка:\n\n${link}`, Markup.inlineKeyboard([
+    await ctx.reply(`📩 Ваша реферальная ссылка:\n\n${link}`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
   if (action === 'enter_code') {
     ctx.session = ctx.session || {};
     ctx.session.waitingForCode = true;
-    const msg = await ctx.reply('💬 Введите промокод:');
-    deleteMessage(ctx, msg.message_id);
+    await ctx.reply('💬 Введите промокод:');
     return;
   }
 
   if (action === 'admin') {
     if (id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
-    const msg = await ctx.editMessageText(`⚙️ Админ-панель`, Markup.inlineKeyboard([
+    await ctx.editMessageText(`⚙️ Админ-панель`, Markup.inlineKeyboard([
       [Markup.button.callback('📊 Статистика', 'admin_stats')],
       [Markup.button.callback('🏆 Топ', 'admin_top')],
       [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
@@ -325,7 +311,6 @@ bot.on('callback_query', async (ctx) => {
       [Markup.button.callback('📞 Тикеты поддержки', 'admin_tickets')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
@@ -335,45 +320,39 @@ bot.on('callback_query', async (ctx) => {
     const openTickets = db.prepare('SELECT COUNT(*) as count FROM tickets WHERE status = ?').get('open').count;
     const inProgressTickets = db.prepare('SELECT COUNT(*) as count FROM tickets WHERE status = ?').get('in_progress').count;
     const closedTickets = db.prepare('SELECT COUNT(*) as count FROM tickets WHERE status = ?').get('closed').count;
-    const msg = await ctx.answerCbQuery(
+    return ctx.answerCbQuery(
       `👥 Юзеров: ${total}\n⭐ Звёзд: ${totalStars}\n📞 Тикетов: Открыто: ${openTickets}, В работе: ${inProgressTickets}, Закрыто: ${closedTickets}`,
       { show_alert: true }
     );
-    deleteMessage(ctx, msg.message_id); // Удаляем только если есть message_id
-    return;
   }
 
   if (action === 'admin_top') {
     const top = db.prepare('SELECT username, stars FROM users ORDER BY stars DESC LIMIT 10').all();
     const list = top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} — ${u.stars}⭐`).join('\n');
-    const msg = await ctx.reply(`🏆 Топ 10:\n\n${list}`);
-    deleteMessage(ctx, msg.message_id);
+    await ctx.reply(`🏆 Топ 10:\n\n${list}`);
     return;
   }
 
   if (action === 'admin_broadcast') {
     ctx.session = ctx.session || {};
     ctx.session.broadcast = true;
-    const msg = await ctx.reply('✏️ Введите текст рассылки:');
-    deleteMessage(ctx, msg.message_id);
+    await ctx.reply('✏️ Введите текст рассылки:');
     return;
   }
 
   if (action === 'admin_addcode') {
     ctx.session = ctx.session || {};
     ctx.session.waitingForPromo = true;
-    const msg = await ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
-    deleteMessage(ctx, msg.message_id);
+    await ctx.reply('✏️ Введите промокод, количество звёзд и количество активаций через пробел:\nНапример: `CODE123 10 5`', { parse_mode: 'Markdown' });
     return;
   }
 
   if (action === 'admin_tickets') {
     const tickets = db.prepare('SELECT * FROM tickets WHERE status != ? ORDER BY created_at DESC LIMIT 10').all('closed');
     if (tickets.length === 0) {
-      const msg = await ctx.reply('📞 Нет открытых или в работе тикетов.', Markup.inlineKeyboard([
+      await ctx.reply('📞 Нет открытых или в работе тикетов.', Markup.inlineKeyboard([
         [Markup.button.callback('🔙 Назад', 'back')]
       ]));
-      deleteMessage(ctx, msg.message_id);
       return;
     }
 
@@ -385,8 +364,7 @@ bot.on('callback_query', async (ctx) => {
     ]);
     buttons.push([Markup.button.callback('🔙 Назад', 'back')]);
 
-    const msg = await ctx.reply('📞 Список тикетов:', Markup.inlineKeyboard(buttons));
-    deleteMessage(ctx, msg.message_id);
+    await ctx.reply('📞 Список тикетов:', Markup.inlineKeyboard(buttons));
     return;
   }
 
@@ -417,8 +395,7 @@ bot.on('callback_query', async (ctx) => {
     }
     buttons.push([Markup.button.callback('🔙 Назад', 'admin_tickets')]);
 
-    const msg = await ctx.editMessageText(ticketText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
-    deleteMessage(ctx, msg.message_id);
+    await ctx.editMessageText(ticketText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
     return;
   }
 
@@ -438,8 +415,7 @@ bot.on('callback_query', async (ctx) => {
     const ticketId = parseInt(action.split('_')[2]);
     ctx.session = ctx.session || {};
     ctx.session.waitingForTicketReply = ticketId;
-    const msg = await ctx.reply(`✍️ Введите ответ для тикета #${ticketId}:`);
-    deleteMessage(ctx, msg.message_id);
+    await ctx.reply(`✍️ Введите ответ для тикета #${ticketId}:`);
     return;
   }
 
@@ -502,19 +478,20 @@ bot.on('callback_query', async (ctx) => {
       }
     }
 
-    // Отправляем уведомление пользователю
-    const msg = await ctx.telegram.sendMessage(
+    // Отправляем уведомление пользователю с удалением
+    const userMsg = await ctx.telegram.sendMessage(
       ticket.user_id,
       `📞 Ваш тикет #${ticketId} обновлён. Новый статус: ${status === 'in_progress' ? 'В работе' : 'Закрыт'}`
     );
-    deleteMessage(ctx, msg.message_id);
-    return ctx.answerCbQuery(`Статус тикета #${ticketId} изменён на "${status === 'in_progress' ? 'В работе' : 'Закрыт'}"`, { show_alert: true });
+    deleteNotification(ctx, userMsg.message_id);
+    const statusMsg = await ctx.answerCbQuery(`Статус тикета #${ticketId} изменён на "${status === 'in_progress' ? 'В работе' : 'Закрыт'}"`, { show_alert: true });
+    deleteNotification(ctx, statusMsg.message_id); // Удаляем, если есть message_id
+    return;
   }
 
   if (action === 'back') {
     await ctx.deleteMessage();
-    const msg = await sendMainMenu(ctx);
-    deleteMessage(ctx, msg.message_id);
+    await sendMainMenu(ctx);
     return;
   }
 });
@@ -529,7 +506,6 @@ bot.on('message', async (ctx) => {
     ctx.session.waitingForPromo = false;
     ctx.session.waitingForSupport = false;
     const msg = await ctx.reply('❌ Пользователь не найден. Пожалуйста, начните с команды /start.');
-    deleteMessage(ctx, msg.message_id);
     return;
   }
 
@@ -578,7 +554,7 @@ bot.on('message', async (ctx) => {
     const msg = await ctx.reply(`✅ Тикет #${ticketId} создан. Мы ответим вам скоро!`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
-    deleteMessage(ctx, msg.message_id);
+    deleteNotification(ctx, msg.message_id);
     ctx.session.waitingForSupport = false;
     return;
   }
@@ -591,7 +567,7 @@ bot.on('message', async (ctx) => {
       } catch {}
     }
     const msg = await ctx.reply('✅ Рассылка завершена.');
-    deleteMessage(ctx, msg.message_id);
+    deleteNotification(ctx, msg.message_id);
     ctx.session.broadcast = false;
     return;
   }
@@ -602,14 +578,14 @@ bot.on('message', async (ctx) => {
 
     if (!promo) {
       const msg = await ctx.reply('❌ Неверный промокод!');
-      deleteMessage(ctx, msg.message_id);
+      deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForCode = false;
       return;
     }
 
     if (promo.activations_left === 0) {
       const msg = await ctx.reply('⚠️ Промокод больше не активен (лимит активаций исчерпан).');
-      deleteMessage(ctx, msg.message_id);
+      deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForCode = false;
       return;
     }
@@ -618,7 +594,7 @@ bot.on('message', async (ctx) => {
 
     if (usedBy.includes(id)) {
       const msg = await ctx.reply('⚠️ Вы уже использовали этот промокод.');
-      deleteMessage(ctx, msg.message_id);
+      deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForCode = false;
       return;
     }
@@ -634,11 +610,11 @@ bot.on('message', async (ctx) => {
     if (user.daily_task_type === 'promo_use' && !user.daily_task_completed) {
       db.prepare('UPDATE users SET daily_task_progress = 1, daily_task_completed = 1, stars = stars + ? WHERE id = ?').run(20, id);
       const msg = await ctx.reply(`🎉 Задание "Активируйте промокод" выполнено! +20 звёзд`);
-      deleteMessage(ctx, msg.message_id);
+      deleteNotification(ctx, msg.message_id);
     }
 
     const msg = await ctx.reply(`✅ Промокод активирован! +${promo.reward} звёзд`);
-    deleteMessage(ctx, msg.message_id);
+    deleteNotification(ctx, msg.message_id);
     ctx.session.waitingForCode = false;
     return;
   }
@@ -647,7 +623,7 @@ bot.on('message', async (ctx) => {
     const parts = ctx.message.text.trim().split(/\s+/);
     if (parts.length !== 3) {
       const msg = await ctx.reply('⚠️ Неверный формат. Используйте: `КОД 10 5` (где 10 — звёзды, 5 — количество активаций)', { parse_mode: 'Markdown' });
-      deleteMessage(ctx, msg.message_id);
+      deleteNotification(ctx, msg.message_id);
       return;
     }
     const [code, rewardStr, activationsStr] = parts;
@@ -656,7 +632,7 @@ bot.on('message', async (ctx) => {
 
     if (!code || isNaN(reward) || isNaN(activations)) {
       const msg = await ctx.reply('⚠️ Неверный формат. Используйте: `КОД 10 5` (где 10 — звёзды, 5 — количество активаций)', { parse_mode: 'Markdown' });
-      deleteMessage(ctx, msg.message_id);
+      deleteNotification(ctx, msg.message_id);
       return;
     }
 
@@ -664,7 +640,7 @@ bot.on('message', async (ctx) => {
       .run(code, reward, activations, JSON.stringify([]));
 
     const msg = await ctx.reply(`✅ Промокод "${code}" на ${reward} звёзд с лимитом активаций ${activations} добавлен.`);
-    deleteMessage(ctx, msg.message_id);
+    deleteNotification(ctx, msg.message_id);
     ctx.session.waitingForPromo = false;
     return;
   }
@@ -674,7 +650,7 @@ bot.on('message', async (ctx) => {
     const ticket = db.prepare('SELECT * FROM tickets WHERE ticket_id = ?').get(ticketId);
     if (!ticket) {
       const msg = await ctx.reply('❌ Тикет не найден.');
-      deleteMessage(ctx, msg.message_id);
+      deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForTicketReply = false;
       return;
     }
@@ -722,7 +698,7 @@ bot.on('message', async (ctx) => {
       ticket.user_id,
       `📞 Ответ на тикет #${ticketId}:\n${replyText}`
     );
-    deleteMessage(ctx, userMsg.message_id);
+    deleteNotification(ctx, userMsg.message_id);
     if (fileIds.length > 0) {
       for (const fileId of fileIds) {
         await ctx.telegram.sendDocument(ticket.user_id, fileId, { caption: `Файл к ответу на тикет #${ticketId}` });
@@ -732,7 +708,7 @@ bot.on('message', async (ctx) => {
     const replyMsg = await ctx.reply(`✅ Ответ на тикет #${ticketId} отправлен.`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 К тикетам', 'admin_tickets')]
     ]));
-    deleteMessage(ctx, replyMsg.message_id);
+    deleteNotification(ctx, replyMsg.message_id);
     ctx.session.waitingForTicketReply = false;
     return;
   }
