@@ -34,7 +34,7 @@ function initializeDatabase() {
       )
     `).run();
 
-    // Создание таблицы tickets
+    // Создание таблицы tickets с новым полем channel_message_id
     db.prepare(`
       CREATE TABLE IF NOT EXISTS tickets (
         ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -44,6 +44,7 @@ function initializeDatabase() {
         status TEXT DEFAULT 'open', -- open, in_progress, closed
         created_at TEXT,
         file_id TEXT, -- JSON array of file IDs
+        channel_message_id INTEGER, -- ID сообщения в канале
         FOREIGN KEY (user_id) REFERENCES users(id)
       )
     `).run();
