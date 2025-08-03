@@ -2,7 +2,7 @@ const { Telegraf, Markup, session } = require('telegraf');
 const dayjs = require('dayjs');
 require('dotenv').config();
 
-const db = require('./db');
+const db = require('./database'); // Изменено на './database' для соответствия вашему импорту
 const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
@@ -151,15 +151,15 @@ bot.on('callback_query', async (ctx) => {
       if (progress >= 10) {
         completed = 1;
         db.prepare('UPDATE users SET stars = stars + 10 WHERE id = ?').run(id);
+        db.prepare('UPDATE users SET daily_task_progress = ?, daily_task_completed = ? WHERE id = ?').run(progress, completed, id);
         return ctx.answerCbQuery('🎉 Задание "Соберите 10 звёзд фармом" выполнено! +10 звёзд', { show_alert: true });
       } else {
-        return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
+        db.prepare('UPDATE users SET daily_task_progress = ?, daily_task_completed = ? WHERE id = ?').run(progress, completed, id);
+        return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true }); // Изменено на show_alert: true
       }
-      db.prepare('UPDATE users SET daily_task_progress = ?, daily_task_completed = ? WHERE id = ?').run(progress, completed, id);
     } else {
-      return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: false });
+      return ctx.answerCbQuery('⭐ Вы заработали 1 звезду!', { show_alert: true }); // Изменено на show_alert: true
     }
-    return;
   }
 
   if (action === 'bonus') {
