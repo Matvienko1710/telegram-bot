@@ -6,12 +6,13 @@ const db = require('./db');
 const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
-// 🔁 Ссылки для заданий (замените на свои):
-const REQUIRED_CHANNEL = '@magnumtap'; // Обязательный канал для запуска бота
-const TASK_CHANNEL = '@exampleChannel'; // Канал для задания "Подписаться на канал"
-const BOT_LINK = `https://t.me/${process.env.BOT_NAME || 'https://t.me/firestars_rbot?start=6587897295'}`; // Ссылка на бота для задания "Запустить бота"
-const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
-const SUPPORT_CHANNEL = '@magnumsupported'; // Канал для тикетов и заявок
+// Ссылки и настройки из .env
+const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@YourMainChannel'; // Обязательный канал для запуска бота
+const TASK_CHANNEL = process.env.TASK_CHANNEL || '@YourTaskChannel'; // Канал для задания "Подписаться на канал"
+const TASK_BOT_LINK = process.env.TASK_BOT_LINK || `https://t.me/${process.env.BOT_NAME || 'firestars_rbot'}`; // Реферальная ссылка для задания "Запустить бота"
+const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(id => parseInt(id)) : [6587897295]; // Список ID администраторов
+const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@YourSupportChannel'; // Канал для тикетов и заявок
+const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS) || 60; // Кулдаун фарма в секундах
 const MESSAGE_TTL = 15_000; // Время жизни уведомлений (15 секунд)
 
 // Функция для удаления уведомлений
@@ -57,7 +58,7 @@ function sendMainMenu(ctx) {
     [Markup.button.callback('📩 Пригласить друзей', 'ref')],
     [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
     [Markup.button.callback('📋 Задания', 'tasks')],
-    ctx.from.id === ADMIN_ID ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
+    ADMIN_IDS.includes(ctx.from.id) ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
   ]));
 }
 
@@ -65,7 +66,7 @@ function sendMainMenu(ctx) {
 function initTasks() {
   const initialTasks = [
     { type: 'subscribe_channel', description: `Подпишитесь на канал ${TASK_CHANNEL} и отправьте скриншот`, goal: 1, reward: 10 },
-    { type: 'start_bot', description: `Запустите бота по ссылке ${BOT_LINK} и отправьте скриншот`, goal: 1, reward: 5 },
+    { type: 'start_bot', description: `Запустите бота по ссылке ${TASK_BOT_LINK} и отправьте скриншот`, goal: 1, reward: 5 },
   ];
 
   initialTasks.forEach(task => {
@@ -110,7 +111,7 @@ bot.start(async (ctx) => {
 
   await ctx.reply(
     `👋 Привет, <b>${ctx.from.first_name || 'друг'}</b>!\n\n` +
-    `Добро пожаловать в <b>MagnumTap</b>!\n\n` +
+    `Добро пожаловать в <b>FIRE STARS</b>!\n\n` +
     `✨ Здесь ты можешь:\n` +
     `• Зарабатывать звёзды (Фарм)\n` +
     `• Получать бонусы\n` +
@@ -143,7 +144,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'farm') {
-    const cooldown = 60 * 1000;
+    const cooldown = FARM_COOLDOWN_SECONDS * 1000;
     if (now - user.last_farm < cooldown) {
       const seconds = Math.ceil((cooldown - (now - user.last_farm)) / 1000);
       return ctx.answerCbQuery(`⏳ Подождите ${seconds} сек.`, { show_alert: true });
@@ -303,7 +304,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin') {
-    if (id !== ADMIN_ID) return ctx.answerCbQuery('⛔ Доступ запрещён');
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ запрещён');
     await ctx.editMessageText(`⚙️ Админ-панель`, Markup.inlineKeyboard([
       [Markup.button.callback('📊 Статистика', 'admin_stats')],
       [Markup.button.callback('🏆 Топ', 'admin_top')],
@@ -459,7 +460,7 @@ bot.on('callback_query', async (ctx) => {
 
     await ctx.telegram.sendMessage(
       ticket.user_id,
-      `📋 Заявка #${ticketId} на задание "${taskType}" одобрена! Вы получили ${task.reward} звёзд.`
+      `📋 Заявка #${ticketId} на задание "${taskType === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}" одобрена! Вы получили ${task.reward} звёзд.`
     );
     await ctx.answerCbQuery(`✅ Заявка #${ticketId} одобрена`, { show_alert: true });
     await ctx.deleteMessage();
@@ -475,6 +476,7 @@ bot.on('callback_query', async (ctx) => {
     if (!ticket) return ctx.answerCbQuery('Заявка не найдена', { show_alert: true });
 
     db.run('UPDATE tickets SET status = ? WHERE ticket_id = ?', ['rejected', ticketId]);
+    db.run('DELETE FROM user_tasks WHERE user_id = ? AND task_id = ?', [ticket.user_id, db.get('SELECT id FROM tasks WHERE type = ?', [ticket.task_type]).id]);
 
     if (ticket.channel_message_id) {
       try {
@@ -499,7 +501,7 @@ bot.on('callback_query', async (ctx) => {
 
     await ctx.telegram.sendMessage(
       ticket.user_id,
-      `📋 Заявка #${ticketId} на задание "${ticket.task_type}" отклонена.`
+      `📋 Заявка #${ticketId} на задание "${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}" отклонена.`
     );
     await ctx.answerCbQuery(`❌ Заявка #${ticketId} отклонена`, { show_alert: true });
     await ctx.deleteMessage();
@@ -621,7 +623,7 @@ bot.on('message', async (ctx) => {
     const ticketText =
       `📋 Заявка #${ticketId}\n` +
       `👤 Пользователь: @${user.username || 'без ника'}\n` +
-      `🆔 ID: ${id}\n` +
+      `�ID: ${id}\n` +
       `📝 Задание: ${task.description}\n` +
       `📎 Файлы: 1 шт.\n` +
       `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
@@ -636,7 +638,7 @@ bot.on('message', async (ctx) => {
     );
     await ctx.telegram.sendDocument(SUPPORT_CHANNEL, fileId, { caption: `Скриншот для заявки #${ticketId}` });
 
-    await ctx.telegram.sendMessage(ADMIN_ID, `📋 Новая заявка #${ticketId} на задание "${taskType}" от @${user.username || 'без ника'}`);
+    await ctx.telegram.sendMessage(ADMIN_IDS[0], `📋 Новая заявка #${ticketId} на задание "${taskType}" от @${user.username || 'без ника'}`);
     db.run('INSERT OR REPLACE INTO user_tasks (user_id, task_id, progress, completed) VALUES (?, ?, ?, ?)', [id, task.id, 1, 0]);
 
     const msg = await ctx.reply(`✅ Заявка #${ticketId} на задание отправлена на проверку.`, Markup.inlineKeyboard([
@@ -669,7 +671,7 @@ bot.on('message', async (ctx) => {
     const ticketText =
       `📞 Тикет #${ticketId}\n` +
       `👤 Пользователь: @${user.username || 'без ника'}\n` +
-      `🆔 ID: ${id}\n` +
+      `�ID: ${id}\n` +
       `📝 Описание: ${description}\n` +
       `📎 Файлы: ${fileIds.length > 0 ? fileIds.length + ' шт.' : 'Нет'}\n` +
       `📅 Создан: ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
@@ -688,7 +690,7 @@ bot.on('message', async (ctx) => {
       }
     }
 
-    await ctx.telegram.sendMessage(ADMIN_ID, `📞 Новый тикет #${ticketId} от @${user.username || 'без ника'}`);
+    await ctx.telegram.sendMessage(ADMIN_IDS[0], `📞 Новый тикет #${ticketId} от @${user.username || 'без ника'}`);
     const msg = await ctx.reply(`✅ Тикет #${ticketId} создан.`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
     ]));
@@ -697,7 +699,7 @@ bot.on('message', async (ctx) => {
     return;
   }
 
-  if (ctx.session?.broadcast && id === ADMIN_ID) {
+  if (ctx.session?.broadcast && ADMIN_IDS.includes(id)) {
     const users = db.all('SELECT id FROM users');
     for (const u of users) {
       try {
@@ -750,7 +752,7 @@ bot.on('message', async (ctx) => {
     return;
   }
 
-  if (ctx.session?.waitingForPromo && id === ADMIN_ID) {
+  if (ctx.session?.waitingForPromo && ADMIN_IDS.includes(id)) {
     const parts = ctx.message.text.trim().split(/\s+/);
     if (parts.length !== 3) {
       const msg = await ctx.reply('⚠️ Формат: `КОД 10 5`', { parse_mode: 'Markdown' });
@@ -780,7 +782,7 @@ bot.on('message', async (ctx) => {
     return;
   }
 
-  if (ctx.session?.waitingForTicketReply && id === ADMIN_ID) {
+  if (ctx.session?.waitingForTicketReply && ADMIN_IDS.includes(id)) {
     const ticketId = ctx.session.waitingForTicketReply;
     const ticket = db.get('SELECT * FROM tickets WHERE ticket_id = ?', [ticketId]);
     if (!ticket) {
