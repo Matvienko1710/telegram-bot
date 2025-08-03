@@ -8,7 +8,7 @@ bot.use(session());
 
 const REQUIRED_CHANNEL = '@magnumtap';
 const ADMIN_ID = 6587897295; // 🔁 Замени на свой Telegram ID
-const SUPPORT_CHANNEL = '@MagnumSupportTickets'; // Канал для тикетов
+const SUPPORT_CHANNEL = '@magnumsupported'; // Канал для тикетов
 
 // Middleware для проверки регистрации пользователя
 bot.use(async (ctx, next) => {
