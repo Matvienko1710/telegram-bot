@@ -24,15 +24,23 @@ const MESSAGE_TTL = 15_000;
 // Функция для проверки и обновления титула
 function updateUserTitle(ctx, userId) {
   const user = db.get('SELECT * FROM users WHERE id = ?', [userId]);
+  if (!user) {
+    console.error(`Пользователь ${userId} не найден при обновлении титула`);
+    return;
+  }
   const stars = user.stars || 0;
   const referrals = db.get('SELECT COUNT(*) as count FROM users WHERE referred_by = ?', [userId]).count || 0;
   const completedTasks = db.get('SELECT COUNT(*) as count FROM user_tasks WHERE user_id = ? AND completed = 1', [userId]).count || 0;
   const promoCodesUsed = db.get('SELECT COUNT(*) as count FROM promo_codes WHERE used_by LIKE ?', [`%${userId}%`]).count || 0;
   const dailyStreak = user.daily_streak || 0;
 
-  const titles = db.all('SELECT * FROM titles ORDER BY condition_value DESC');
-  let newTitle = null;
+  const titles = db.all('SELECT * FROM titles ORDER BY condition_value DESC', []);
+  if (!Array.isArray(titles)) {
+    console.error('Ошибка: titles не является массивом', titles);
+    return;
+  }
 
+  let newTitle = null;
   for (const title of titles) {
     let achieved = false;
     switch (title.condition_type) {
@@ -114,8 +122,13 @@ function getTopUsers(limit = 10) {
 async function sendMainMenu(ctx, edit = false) {
   const id = ctx.from.id;
   const user = db.get('SELECT * FROM users WHERE id = ?', [id]);
-  const stars = user ? user.stars : 0;
-  const invited = user ? db.get('SELECT COUNT(*) as count FROM users WHERE referred_by = ?', [id]).count : 0;
+  if (!user) {
+    const msg = await ctx.reply('❌ Пользователь не найден! Напиши /start, чтобы зарегистрироваться.');
+    deleteNotification(ctx, msg.message_id);
+    return;
+  }
+  const stars = user.stars || 0;
+  const invited = db.get('SELECT COUNT(*) as count FROM users WHERE referred_by = ?', [id]).count || 0;
   const messageText =
     `👋 <b>Добро пожаловать в Magnum Stars!</b> 🌟\n\n` +
     `Ты в игре, где можно <i>зарабатывать звёзды</i> ✨, выполняя простые задания, приглашая друзей и собирая бонусы! 🚀\n\n` +
@@ -142,10 +155,16 @@ async function sendMainMenu(ctx, edit = false) {
     ADMIN_IDS.includes(ctx.from.id) ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
   ]);
 
-  if (edit) {
-    await ctx.editMessageText(messageText, { parse_mode: 'HTML', ...keyboard });
-  } else {
-    await ctx.reply(messageText, { parse_mode: 'HTML', ...keyboard });
+  try {
+    if (edit) {
+      await ctx.editMessageText(messageText, { parse_mode: 'HTML', ...keyboard });
+    } else {
+      await ctx.reply(messageText, { parse_mode: 'HTML', ...keyboard });
+    }
+  } catch (err) {
+    console.error('Ошибка отправки главного меню:', err);
+    const msg = await ctx.reply('❌ Ошибка при загрузке меню. Попробуй снова!');
+    deleteNotification(ctx, msg.message_id);
   }
 }
 
@@ -197,15 +216,18 @@ bot.start(async (ctx) => {
   // Регистрация пользователя
   const existing = db.get('SELECT * FROM users WHERE id = ?', [id]);
   if (!existing) {
-    db.run('INSERT INTO users (id, username, referred_by, stars, daily_streak) VALUES (?, ?, ?, 0, 0)', [id, username, referral]);
+    db.run('INSERT INTO users (id, username, referred_by, stars, daily_streak) VALUES (?, ?, ?, ?, ?)', [id, username, referral, 0, 0]);
     if (referral && referral !== id) {
-      db.run('UPDATE users SET stars = stars + 10 WHERE id = ?', [referral]);
-      ctx.telegram.sendMessage(
-        referral,
-        `🎉 Твой друг @${username || 'без ника'} присоединился к Magnum Stars! +10 звёзд! 🌟`,
-        { parse_mode: 'HTML' }
-      );
-      updateUserTitle(ctx, referral); // Проверка титула для реферера
+      const referrerExists = db.get('SELECT * FROM users WHERE id = ?', [referral]);
+      if (referrerExists) {
+        db.run('UPDATE users SET stars = stars + 10 WHERE id = ?', [referral]);
+        ctx.telegram.sendMessage(
+          referral,
+          `🎉 Твой друг @${username || 'без ника'} присоединился к Magnum Stars! +10 звёзд! 🌟`,
+          { parse_mode: 'HTML' }
+        );
+        updateUserTitle(ctx, referral); // Проверка титула для реферера
+      }
     }
   }
 
@@ -249,14 +271,34 @@ bot.on('callback_query', async (ctx) => {
   const action = ctx.callbackQuery.data;
   let user = db.get('SELECT * FROM users WHERE id = ?', [id]);
 
-  if (!user && action !== 'check_sub') return ctx.answerCbQuery('❌ Пользователь не найден! Напиши /start.', { show_alert: true });
+  if (!user && action !== 'check_sub') {
+    await ctx.answerCbQuery('❌ Пользователь не найден! Напиши /start.', { show_alert: true });
+    return;
+  }
 
   if (action === 'check_sub') {
     const subscribed = await isUserSubscribed(ctx);
     if (!subscribed) {
       return ctx.answerCbQuery(`❌ Подпишись на ${REQUIRED_CHANNEL} для доступа к Magnum Stars!`, { show_alert: true });
     }
-    registerUser(ctx);
+    const existing = db.get('SELECT * FROM users WHERE id = ?', [id]);
+    if (!existing) {
+      const username = ctx.from.username || '';
+      const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
+      db.run('INSERT INTO users (id, username, referred_by, stars, daily_streak) VALUES (?, ?, ?, ?, ?)', [id, username, referral, 0, 0]);
+      if (referral && referral !== id) {
+        const referrerExists = db.get('SELECT * FROM users WHERE id = ?', [referral]);
+        if (referrerExists) {
+          db.run('UPDATE users SET stars = stars + 10 WHERE id = ?', [referral]);
+          ctx.telegram.sendMessage(
+            referral,
+            `🎉 Твой друг @${username || 'без ника'} присоединился к Magnum Stars! +10 звёзд! 🌟`,
+            { parse_mode: 'HTML' }
+          );
+          updateUserTitle(ctx, referral);
+        }
+      }
+    }
     await sendMainMenu(ctx);
     return;
   }
@@ -292,7 +334,7 @@ bot.on('callback_query', async (ctx) => {
 
   if (action === 'tasks' || action === 'next_task') {
     ctx.session.currentTaskIndex = action === 'next_task' ? (ctx.session.currentTaskIndex || 0) + 1 : ctx.session.currentTaskIndex || 0;
-    const tasks = db.all('SELECT * FROM tasks');
+    const tasks = db.all('SELECT * FROM tasks', []);
     if (tasks.length === 0) {
       await ctx.editMessageText(
         '📋 <b>Заданий пока нет!</b>\n\n<i>Новые задания скоро появятся, следи за обновлениями в Magnum Stars!</i>',
@@ -323,10 +365,14 @@ bot.on('callback_query', async (ctx) => {
       `💰 <b>Награда:</b> ${task.reward} звёзд\n` +
       `📌 <b>Статус:</b> ${taskStatus}\n\n` +
       `<i>Выполни задание и отправь скриншот для проверки!</i>`;
-    if (action === 'next_task') {
-      await ctx.editMessageText(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
-    } else {
-      await ctx.reply(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+    try {
+      if (action === 'next_task') {
+        await ctx.editMessageText(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+      } else {
+        await ctx.reply(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+      }
+    } catch (err) {
+      console.error('Ошибка отображения задания:', err);
     }
     return;
   }
@@ -365,7 +411,7 @@ bot.on('callback_query', async (ctx) => {
     const displayName = ctx.from.first_name || 'Аноним';
     const title = user.title_id ? db.get('SELECT name, description FROM titles WHERE id = ?', [user.title_id]) : null;
     const titleText = title ? `${title.name} (${title.description})` : 'Нет титула';
-    const tasks = db.all('SELECT * FROM tasks');
+    const tasks = db.all('SELECT * FROM tasks', []);
     const completedTasks = db.all('SELECT t.description FROM user_tasks ut JOIN tasks t ON ut.task_id = t.id WHERE ut.user_id = ? AND ut.completed = 1', [id]);
     const nowDay = dayjs();
     const lastBonus = user.last_bonus ? dayjs(user.last_bonus) : null;
@@ -964,7 +1010,7 @@ bot.on('message', async (ctx) => {
   }
 
   if (ctx.session?.broadcast && ADMIN_IDS.includes(id)) {
-    const users = db.all('SELECT id FROM users');
+    const users = db.all('SELECT id FROM users', []);
     let successCount = 0;
     for (const u of users) {
       try {
@@ -1134,26 +1180,6 @@ bot.on('message', async (ctx) => {
     return;
   }
 });
-
-// Функция регистрации пользователя
-function registerUser(ctx) {
-  const id = ctx.from.id;
-  const username = ctx.from.username || '';
-  const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
-  const existing = db.get('SELECT * FROM users WHERE id = ?', [id]);
-  if (!existing) {
-    db.run('INSERT INTO users (id, username, referred_by, stars, daily_streak) VALUES (?, ?, ?, 0, 0)', [id, username, referral]);
-    if (referral && referral !== id) {
-      db.run('UPDATE users SET stars = stars + 10 WHERE id = ?', [referral]);
-      ctx.telegram.sendMessage(
-        referral,
-        `🎉 Твой друг @${username || 'без ника'} присоединился к Magnum Stars! +10 звёзд! 🌟`,
-        { parse_mode: 'HTML' }
-      );
-      updateUserTitle(ctx, referral);
-    }
-  }
-}
 
 // Запуск бота
 bot.launch().then(() => console.log('🤖 Бот Magnum Stars запущен!')).catch(err => console.error('Ошибка запуска:', err));
