@@ -1,13 +1,10 @@
-console.log('Попытка загрузки модуля better-sqlite3...');
 const Database = require('better-sqlite3');
-console.log('Модуль better-sqlite3 успешно загружен.');
 const path = require('path');
 
-// Инициализация базы данных
+console.log('Инициализация базы данных SQLite...');
 const db = new Database(path.join(__dirname, 'bot.db'), { verbose: console.log });
-console.log('Подключение к базе данных SQLite успешно.');
 
-// Функция для инициализации таблиц и начальных данных
+// Инициализация таблиц и начальных данных
 function initDb() {
   try {
     // Таблица пользователей
@@ -52,7 +49,7 @@ function initDb() {
       )
     `);
 
-    // Таблица выполненных заданий пользователями
+    // Таблица выполненных заданий
     db.exec(`
       CREATE TABLE IF NOT EXISTS user_tasks (
         user_id INTEGER,
@@ -82,95 +79,41 @@ function initDb() {
         name TEXT,
         description TEXT,
         condition_type TEXT,
-        condition_value INTEGER,
+        condition_value TEXT, -- Изменено на TEXT для хранения комбинированных условий
         is_secret INTEGER DEFAULT 0
       )
     `);
 
-    // Инициализация начальных титулов
+    // Начальные титулы
     const initialTitles = [
-      {
-        name: 'Новичок',
-        description: 'Только начал свой путь к звёздам!',
-        condition_type: 'stars',
-        condition_value: 0,
-        is_secret: 0
-      },
-      {
-        name: 'Звёздный Охотник',
-        description: 'Собрал 50 звёзд!',
-        condition_type: 'stars',
-        condition_value: 50,
-        is_secret: 0
-      },
-      {
-        name: 'Космический Лидер',
-        description: 'Собрал 100 звёзд!',
-        condition_type: 'stars',
-        condition_value: 100,
-        is_secret: 0
-      },
-      {
-        name: 'Галактический Герой',
-        description: 'Собрал 500 звёзд!',
-        condition_type: 'stars',
-        condition_value: 500,
-        is_secret: 0
-      },
-      {
-        name: 'Призыватель',
-        description: 'Пригласил 3 друзей!',
-        condition_type: 'referrals',
-        condition_value: 3,
-        is_secret: 0
-      },
-      {
-        name: 'Командующий',
-        description: 'Пригласил 10 друзей!',
-        condition_type: 'referrals',
-        condition_value: 10,
-        is_secret: 0
-      },
-      {
-        name: 'Мастер Заданий',
-        description: 'Выполнил 5 заданий!',
-        condition_type: 'tasks',
-        condition_value: 5,
-        is_secret: 0
-      },
-      {
-        name: 'Звёздный Странник',
-        description: '10 дней подряд собирал бонусы!',
-        condition_type: 'daily_streak',
-        condition_value: 10,
-        is_secret: 0
-      },
-      {
-        name: 'Кодовый Гений',
-        description: 'Активировал 3 промокода!',
-        condition_type: 'promo_codes',
-        condition_value: 3,
-        is_secret: 0
-      },
+      { name: 'Новичок', description: 'Только начал свой путь к звёздам!', condition_type: 'stars', condition_value: '0', is_secret: 0 },
+      { name: 'Звёздный Охотник', description: 'Собрал 50 звёзд!', condition_type: 'stars', condition_value: '50', is_secret: 0 },
+      { name: 'Космический Лидер', description: 'Собрал 100 звёзд!', condition_type: 'stars', condition_value: '100', is_secret: 0 },
+      { name: 'Галактический Герой', description: 'Собрал 500 звёзд!', condition_type: 'stars', condition_value: '500', is_secret: 0 },
+      { name: 'Призыватель', description: 'Пригласил 3 друзей!', condition_type: 'referrals', condition_value: '3', is_secret: 0 },
+      { name: 'Командующий', description: 'Пригласил 10 друзей!', condition_type: 'referrals', condition_value: '10', is_secret: 0 },
+      { name: 'Мастер Заданий', description: 'Выполнил 5 заданий!', condition_type: 'tasks', condition_value: '5', is_secret: 0 },
+      { name: 'Звёздный Странник', description: '10 дней подряд собирал бонусы!', condition_type: 'daily_streak', condition_value: '10', is_secret: 0 },
+      { name: 'Кодовый Гений', description: 'Активировал 3 промокода!', condition_type: 'promo_codes', condition_value: '3', is_secret: 0 },
       {
         name: 'Легенда Вселенной',
-        description: 'Секретный титул для избранных!',
-        condition_type: 'admin',
-        condition_value: 0,
+        description: 'Собрал 1000 звёзд и пригласил 20 друзей!',
+        condition_type: 'combined',
+        condition_value: JSON.stringify({ stars: 1000, referrals: 20 }),
         is_secret: 1
       },
       {
         name: 'Звёздный Архитектор',
-        description: 'Секретный титул для создателей звёзд!',
-        condition_type: 'admin',
-        condition_value: 0,
+        description: 'Выполнил 15 заданий и 30 дней подряд собирал бонусы!',
+        condition_type: 'combined',
+        condition_value: JSON.stringify({ tasks: 15, daily_streak: 30 }),
         is_secret: 1
       },
       {
         name: 'Космический Властелин',
-        description: 'Секретный титул для правителей галактики!',
-        condition_type: 'admin',
-        condition_value: 0,
+        description: 'Активировал 10 промокодов и попал в топ-3 по звёздам!',
+        condition_type: 'combined',
+        condition_value: JSON.stringify({ promo_codes: 10, top_stars: 3 }),
         is_secret: 1
       }
     ];
@@ -180,32 +123,14 @@ function initDb() {
       VALUES (?, ?, ?, ?, ?)
     `);
     initialTitles.forEach(title => {
-      const info = insertTitle.run(title.name, title.description, title.condition_type, title.condition_value, title.is_secret);
-      if (info.changes) {
-        console.log(`Титул "${title.name}" создан с условием ${title.condition_type} >= ${title.condition_value}, секретный: ${title.is_secret}`);
-      }
+      insertTitle.run(title.name, title.description, title.condition_type, title.condition_value, title.is_secret);
     });
 
-    // Инициализация начальных заданий
+    // Начальные задания
     const initialTasks = [
-      {
-        type: 'subscribe_channel',
-        description: `Подпишись на канал ${process.env.TASK_CHANNEL || '@musice46'}`,
-        goal: 1,
-        reward: 5
-      },
-      {
-        type: 'subscribe_channel_kittyyyyywwr',
-        description: `Подпишись на канал ${process.env.TASK_CHANNEL_KITTY || '@kittyyyyywwr'}`,
-        goal: 1,
-        reward: 5
-      },
-      {
-        type: 'start_bot',
-        description: `Запусти бота по ссылке ${process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot'}`,
-        goal: 1,
-        reward: 10
-      }
+      { type: 'subscribe_channel', description: `Подпишись на канал ${process.env.TASK_CHANNEL || '@musice46'}`, goal: 1, reward: 5 },
+      { type: 'subscribe_channel_kittyyyyywwr', description: `Подпишись на канал ${process.env.TASK_CHANNEL_KITTY || '@kittyyyyywwr'}`, goal: 1, reward: 5 },
+      { type: 'start_bot', description: `Запусти бота по ссылке ${process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot'}`, goal: 1, reward: 10 }
     ];
 
     const insertTask = db.prepare(`
@@ -213,46 +138,20 @@ function initDb() {
       VALUES (?, ?, ?, ?)
     `);
     initialTasks.forEach(task => {
-      const info = insertTask.run(task.type, task.description, task.goal, task.reward);
-      if (info.changes) {
-        console.log(`Задание "${task.description}" создано с наградой ${task.reward} звёзд`);
-      }
+      insertTask.run(task.type, task.description, task.goal, task.reward);
     });
 
-    console.log('База данных инициализирована успешно.');
+    console.log('База данных инициализирована.');
   } catch (err) {
     console.error('Ошибка инициализации базы данных:', err);
     process.exit(1);
   }
 }
 
-// Инициализация базы данных
 initDb();
 
-// Экспорт методов для работы с базой данных
 module.exports = {
-  get: (query, params = []) => {
-    try {
-      return db.prepare(query).get(...params);
-    } catch (err) {
-      console.error(`Ошибка в db.get (${query}):`, err);
-      throw err;
-    }
-  },
-  all: (query, params = []) => {
-    try {
-      return db.prepare(query).all(...params);
-    } catch (err) {
-      console.error(`Ошибка в db.all (${query}):`, err);
-      throw err;
-    }
-  },
-  run: (query, params = []) => {
-    try {
-      return db.prepare(query).run(...params);
-    } catch (err) {
-      console.error(`Ошибка в db.run (${query}):`, err);
-      throw err;
-    }
-  }
+  get: (query, params = []) => db.prepare(query).get(...params),
+  all: (query, params = []) => db.prepare(query).all(...params),
+  run: (query, params = []) => db.prepare(query).run(...params)
 };
