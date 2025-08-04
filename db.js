@@ -1,20 +1,17 @@
-const sqlite3 = require('sqlite3').verbose();
+console.log('Попытка загрузки модуля better-sqlite3...');
+const Database = require('better-sqlite3');
+console.log('Модуль better-sqlite3 успешно загружен.');
 const path = require('path');
 
-// Инициализация базы данных SQLite
-const db = new sqlite3.Database(path.join(__dirname, 'bot.db'), (err) => {
-  if (err) {
-    console.error('Детальная ошибка подключения к SQLite:', err.message, err.stack);
-    process.exit(1);
-  }
-  console.log('Подключение к базе данных SQLite успешно.');
-});
+// Инициализация базы данных
+const db = new Database(path.join(__dirname, 'bot.db'), { verbose: console.log });
+console.log('Подключение к базе данных SQLite успешно.');
 
 // Функция для инициализации таблиц и начальных данных
 function initDb() {
   try {
     // Таблица пользователей
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         username TEXT,
@@ -29,7 +26,7 @@ function initDb() {
     `);
 
     // Таблица тикетов
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS tickets (
         ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -45,7 +42,7 @@ function initDb() {
     `);
 
     // Таблица заданий
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT UNIQUE,
@@ -56,7 +53,7 @@ function initDb() {
     `);
 
     // Таблица выполненных заданий пользователями
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS user_tasks (
         user_id INTEGER,
         task_id INTEGER,
@@ -69,7 +66,7 @@ function initDb() {
     `);
 
     // Таблица промокодов
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS promo_codes (
         code TEXT PRIMARY KEY,
         reward INTEGER,
@@ -79,7 +76,7 @@ function initDb() {
     `);
 
     // Таблица титулов
-    db.run(`
+    db.exec(`
       CREATE TABLE IF NOT EXISTS titles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         name TEXT,
@@ -147,11 +144,13 @@ function initDb() {
       }
     ];
 
+    const insertTitle = db.prepare(`
+      INSERT OR IGNORE INTO titles (name, description, condition_type, condition_value)
+      VALUES (?, ?, ?, ?)
+    `);
     initialTitles.forEach(title => {
-      const exists = db.prepare('SELECT * FROM titles WHERE name = ? AND condition_type = ?').get(title.name, title.condition_type);
-      if (!exists) {
-        db.prepare('INSERT INTO titles (name, description, condition_type, condition_value) VALUES (?, ?, ?, ?)')
-          .run(title.name, title.description, title.condition_type, title.condition_value);
+      const info = insertTitle.run(title.name, title.description, title.condition_type, title.condition_value);
+      if (info.changes) {
         console.log(`Титул "${title.name}" создан с условием ${title.condition_type} >= ${title.condition_value}`);
       }
     });
@@ -178,11 +177,13 @@ function initDb() {
       }
     ];
 
+    const insertTask = db.prepare(`
+      INSERT OR IGNORE INTO tasks (type, description, goal, reward)
+      VALUES (?, ?, ?, ?)
+    `);
     initialTasks.forEach(task => {
-      const exists = db.prepare('SELECT * FROM tasks WHERE type = ?').get(task.type);
-      if (!exists) {
-        db.prepare('INSERT INTO tasks (type, description, goal, reward) VALUES (?, ?, ?, ?)')
-          .run(task.type, task.description, task.goal, task.reward);
+      const info = insertTask.run(task.type, task.description, task.goal, task.reward);
+      if (info.changes) {
         console.log(`Задание "${task.description}" создано с наградой ${task.reward} звёзд`);
       }
     });
@@ -199,7 +200,28 @@ initDb();
 
 // Экспорт методов для работы с базой данных
 module.exports = {
-  get: (query, params) => db.prepare(query).get(...params),
-  all: (query, params) => db.prepare(query).all(...params),
-  run: (query, params) => db.prepare(query).run(...params)
+  get: (query, params = []) => {
+    try {
+      return db.prepare(query).get(...params);
+    } catch (err) {
+      console.error(`Ошибка в db.get (${query}):`, err);
+      throw err;
+    }
+  },
+  all: (query, params = []) => {
+    try {
+      return db.prepare(query).all(...params);
+    } catch (err) {
+      console.error(`Ошибка в db.all (${query}):`, err);
+      throw err;
+    }
+  },
+  run: (query, params = []) => {
+    try {
+      return db.prepare(query).run(...params);
+    } catch (err) {
+      console.error(`Ошибка в db.run (${query}):`, err);
+      throw err;
+    }
+  }
 };
