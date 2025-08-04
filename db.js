@@ -1,26 +1,35 @@
-const Database = require('better-sqlite3');
-const db = new Database('bot.db', { verbose: console.log });
+const sqlite3 = require('sqlite3').verbose();
+const path = require('path');
 
+// Инициализация базы данных SQLite
+const db = new sqlite3.Database(path.join(__dirname, 'bot.db'), (err) => {
+  if (err) {
+    console.error('Ошибка подключения к базе данных:', err);
+    process.exit(1);
+  }
+  console.log('Подключение к базе данных SQLite успешно.');
+});
+
+// Функция для инициализации таблиц и начальных данных
 function initDb() {
   try {
-    // Создание таблицы users
-    db.exec(`
+    // Таблица пользователей
+    db.run(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         username TEXT,
         stars INTEGER DEFAULT 0,
         last_farm INTEGER DEFAULT 0,
         last_bonus TEXT,
+        daily_streak INTEGER DEFAULT 0,
         referred_by INTEGER,
         title_id INTEGER,
-        daily_streak INTEGER DEFAULT 0,
-        FOREIGN KEY (referred_by) REFERENCES users(id),
         FOREIGN KEY (title_id) REFERENCES titles(id)
       )
     `);
 
-    // Создание таблицы tickets
-    db.exec(`
+    // Таблица тикетов
+    db.run(`
       CREATE TABLE IF NOT EXISTS tickets (
         ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
@@ -29,14 +38,14 @@ function initDb() {
         created_at TEXT,
         file_id TEXT,
         channel_message_id INTEGER,
-        task_type TEXT,
         status TEXT DEFAULT 'open',
+        task_type TEXT,
         FOREIGN KEY (user_id) REFERENCES users(id)
       )
     `);
 
-    // Создание таблицы tasks
-    db.exec(`
+    // Таблица заданий
+    db.run(`
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT UNIQUE,
@@ -46,8 +55,8 @@ function initDb() {
       )
     `);
 
-    // Создание таблицы user_tasks
-    db.exec(`
+    // Таблица выполненных заданий пользователями
+    db.run(`
       CREATE TABLE IF NOT EXISTS user_tasks (
         user_id INTEGER,
         task_id INTEGER,
@@ -59,53 +68,122 @@ function initDb() {
       )
     `);
 
-    // Создание таблицы promo_codes
-    db.exec(`
+    // Таблица промокодов
+    db.run(`
       CREATE TABLE IF NOT EXISTS promo_codes (
         code TEXT PRIMARY KEY,
         reward INTEGER,
         activations_left INTEGER,
-        used_by TEXT
+        used_by TEXT DEFAULT '[]'
       )
     `);
 
-    // Создание таблицы titles
-    db.exec(`
+    // Таблица титулов
+    db.run(`
       CREATE TABLE IF NOT EXISTS titles (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT NOT NULL,
-        condition_type TEXT NOT NULL,
-        condition_value INTEGER NOT NULL,
-        description TEXT
+        name TEXT,
+        description TEXT,
+        condition_type TEXT,
+        condition_value INTEGER
       )
     `);
 
-    // Инициализация титулов
+    // Инициализация начальных титулов
     const initialTitles = [
-      { name: 'Звёздный Новичок', condition_type: 'stars', condition_value: 10, description: 'Первый шаг в мир Magnum Stars!' },
-      { name: 'Звёздный Искры', condition_type: 'stars', condition_value: 50, description: 'Ты начинаешь сиять ярче!' },
-      { name: 'Звёздный Герой', condition_type: 'stars', condition_value: 100, description: 'Настоящий герой звёздного неба!' },
-      { name: 'Звёздный Мастер', condition_type: 'stars', condition_value: 500, description: 'Ты овладел искусством сбора звёзд!' },
-      { name: 'Звёздная Легенда', condition_type: 'stars', condition_value: 1000, description: 'Ты вошёл в историю Magnum Stars!' },
-      { name: 'Дружелюбный Охотник', condition_type: 'referrals', condition_value: 1, description: 'Ты привёл друга в звёздное приключение!' },
-      { name: 'Звёздный Рекрутёр', condition_type: 'referrals', condition_value: 5, description: 'Твоя команда растёт!' },
-      { name: 'Лидер Галактики', condition_type: 'referrals', condition_value: 20, description: 'Ты собираешь целую галактику друзей!' },
-      { name: 'Исполнитель Миссий', condition_type: 'tasks', condition_value: 1, description: 'Ты успешно выполнил свою первую миссию!' },
-      { name: 'Звёздный Исследователь', condition_type: 'tasks', condition_value: 5, description: 'Ты исследуешь все уголки Magnum Stars!' },
-      { name: 'Ежедневный Чемпион', condition_type: 'daily_streak', condition_value: 7, description: 'Твоя регулярность впечатляет!' },
-      { name: 'Промо-Охотник', condition_type: 'promo_codes', condition_value: 3, description: 'Ты находишь секретные коды как охотник!' },
+      {
+        name: 'Новичок',
+        description: 'Только начал свой путь к звёздам!',
+        condition_type: 'stars',
+        condition_value: 0
+      },
+      {
+        name: 'Звёздный Охотник',
+        description: 'Собрал 50 звёзд!',
+        condition_type: 'stars',
+        condition_value: 50
+      },
+      {
+        name: 'Космический Лидер',
+        description: 'Собрал 100 звёзд!',
+        condition_type: 'stars',
+        condition_value: 100
+      },
+      {
+        name: 'Галактический Герой',
+        description: 'Собрал 500 звёзд!',
+        condition_type: 'stars',
+        condition_value: 500
+      },
+      {
+        name: 'Призыватель',
+        description: 'Пригласил 3 друзей!',
+        condition_type: 'referrals',
+        condition_value: 3
+      },
+      {
+        name: 'Командующий',
+        description: 'Пригласил 10 друзей!',
+        condition_type: 'referrals',
+        condition_value: 10
+      },
+      {
+        name: 'Мастер Заданий',
+        description: 'Выполнил 5 заданий!',
+        condition_type: 'tasks',
+        condition_value: 5
+      },
+      {
+        name: 'Звёздный Странник',
+        description: '10 дней подряд собирал бонусы!',
+        condition_type: 'daily_streak',
+        condition_value: 10
+      },
+      {
+        name: 'Кодовый Гений',
+        description: 'Активировал 3 промокода!',
+        condition_type: 'promo_codes',
+        condition_value: 3
+      }
     ];
 
     initialTitles.forEach(title => {
-      const exists = db.prepare('SELECT * FROM titles WHERE name = ?').get(title.name);
+      const exists = db.prepare('SELECT * FROM titles WHERE name = ? AND condition_type = ?').get(title.name, title.condition_type);
       if (!exists) {
-        db.prepare('INSERT INTO titles (name, condition_type, condition_value, description) VALUES (?, ?, ?, ?)').run(
-          title.name,
-          title.condition_type,
-          title.condition_value,
-          title.description
-        );
-        console.log(`Титул "${title.name}" создан с условием "${title.condition_type}: ${title.condition_value}" (описание: "${title.description}")`);
+        db.prepare('INSERT INTO titles (name, description, condition_type, condition_value) VALUES (?, ?, ?, ?)')
+          .run(title.name, title.description, title.condition_type, title.condition_value);
+        console.log(`Титул "${title.name}" создан с условием ${title.condition_type} >= ${title.condition_value}`);
+      }
+    });
+
+    // Инициализация начальных заданий
+    const initialTasks = [
+      {
+        type: 'subscribe_channel',
+        description: `Подпишись на канал ${process.env.TASK_CHANNEL}`,
+        goal: 1,
+        reward: 5
+      },
+      {
+        type: 'subscribe_channel_kittyyyyywwr',
+        description: `Подпишись на канал ${process.env.TASK_CHANNEL_KITTY}`,
+        goal: 1,
+        reward: 5
+      },
+      {
+        type: 'start_bot',
+        description: `Запусти бота по ссылке ${process.env.TASK_BOT_LINK}`,
+        goal: 1,
+        reward: 10
+      }
+    ];
+
+    initialTasks.forEach(task => {
+      const exists = db.prepare('SELECT * FROM tasks WHERE type = ?').get(task.type);
+      if (!exists) {
+        db.prepare('INSERT INTO tasks (type, description, goal, reward) VALUES (?, ?, ?, ?)')
+          .run(task.type, task.description, task.goal, task.reward);
+        console.log(`Задание "${task.description}" создано с наградой ${task.reward} звёзд`);
       }
     });
 
@@ -116,10 +194,12 @@ function initDb() {
   }
 }
 
+// Инициализация базы данных
 initDb();
 
+// Экспорт методов для работы с базой данных
 module.exports = {
   get: (query, params) => db.prepare(query).get(...params),
-  run: (query, params) => db.prepare(query).run(...params),
   all: (query, params) => db.prepare(query).all(...params),
+  run: (query, params) => db.prepare(query).run(...params)
 };
