@@ -61,43 +61,42 @@ function getTopUsers(limit = 10) {
 }
 
 // Главное меню с приветствием
-async function sendMainMenu(ctx, isWelcome = false) {
+async function sendMainMenu(ctx, edit = false) {
   const id = ctx.from.id;
   const user = db.get('SELECT * FROM users WHERE id = ?', [id]);
   const stars = user ? user.stars : 0;
   const invited = user ? db.get('SELECT COUNT(*) as count FROM users WHERE referred_by = ?', [id]).count : 0;
-  const messageText = isWelcome
-    ? `👋 <b>Добро пожаловать в Magnum Stars!</b> 🌟\n\n` +
-      `Ты в игре, где можно <i>зарабатывать звёзды</i> ✨, выполняя простые задания, приглашая друзей и собирая бонусы! 🚀\n\n` +
-      `💫 <b>Твой баланс:</b> ${stars} звёзд\n` +
-      `👥 <b>Приглашено друзей:</b> ${invited}\n\n` +
-      `Выбери действие и стань звездой Magnum Stars! 🌟\n` +
-      `<i>Подсказка: используй /help для справки по боту!</i>`
-    : `🌟 <b>Magnum Stars: Главное меню</b> ✨\n\n` +
-      `💫 <b>Твой баланс:</b> ${stars} звёзд\n` +
-      `👥 <b>Приглашено друзей:</b> ${invited}\n\n` +
-      `Выбери действие и зарабатывай звёзды! 🚀`;
+  const messageText =
+    `👋 <b>Добро пожаловать в Magnum Stars!</b> 🌟\n\n` +
+    `Ты в игре, где можно <i>зарабатывать звёзды</i> ✨, выполняя простые задания, приглашая друзей и собирая бонусы! 🚀\n\n` +
+    `💫 <b>Твой баланс:</b> ${stars} звёзд\n` +
+    `👥 <b>Приглашено друзей:</b> ${invited}\n\n` +
+    `Выбери действие и стань звездой Magnum Stars! 🌟\n` +
+    `<i>Подсказка: используй /help для справки по боту!</i>`;
 
-  return ctx.reply(messageText, {
-    parse_mode: 'HTML',
-    ...Markup.inlineKeyboard([
-      [
-        Markup.button.callback('⭐ Фарм звёзд', 'farm'),
-        Markup.button.callback('🎁 Ежедневный бонус', 'bonus')
-      ],
-      [
-        Markup.button.callback('👤 Мой профиль', 'profile'),
-        Markup.button.callback('🏆 Топ игроков', 'leaders')
-      ],
-      [
-        Markup.button.callback('📊 Статистика', 'stats'),
-        Markup.button.callback('📩 Пригласить друзей', 'ref')
-      ],
-      [Markup.button.callback('📋 Задания', 'tasks')],
-      [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
-      ADMIN_IDS.includes(ctx.from.id) ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
-    ])
-  });
+  const keyboard = Markup.inlineKeyboard([
+    [
+      Markup.button.callback('⭐ Фарм звёзд', 'farm'),
+      Markup.button.callback('🎁 Ежедневный бонус', 'bonus')
+    ],
+    [
+      Markup.button.callback('👤 Мой профиль', 'profile'),
+      Markup.button.callback('🏆 Топ игроков', 'leaders')
+    ],
+    [
+      Markup.button.callback('📊 Статистика', 'stats'),
+      Markup.button.callback('📩 Пригласить друзей', 'ref')
+    ],
+    [Markup.button.callback('📋 Задания', 'tasks')],
+    [Markup.button.callback('💡 Ввести промокод', 'enter_code')],
+    ADMIN_IDS.includes(ctx.from.id) ? [Markup.button.callback('⚙️ Админ-панель', 'admin')] : []
+  ]);
+
+  if (edit) {
+    await ctx.editMessageText(messageText, { parse_mode: 'HTML', ...keyboard });
+  } else {
+    await ctx.reply(messageText, { parse_mode: 'HTML', ...keyboard });
+  }
 }
 
 // Инициализация заданий
@@ -183,7 +182,7 @@ bot.start(async (ctx) => {
     }
   }
 
-  await sendMainMenu(ctx, true); // Отправляем приветствие + меню
+  await sendMainMenu(ctx);
 });
 
 // Обработчик команды /help
@@ -230,7 +229,7 @@ bot.on('callback_query', async (ctx) => {
       return ctx.answerCbQuery(`❌ Подпишись на ${REQUIRED_CHANNEL} для доступа к Magnum Stars!`, { show_alert: true });
     }
     registerUser(ctx);
-    await sendMainMenu(ctx, true);
+    await sendMainMenu(ctx);
     return;
   }
 
@@ -242,6 +241,7 @@ bot.on('callback_query', async (ctx) => {
     }
     db.run('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?', [now, id]);
     user = db.get('SELECT * FROM users WHERE id = ?', [id]); // Обновляем данные
+    await sendMainMenu(ctx, true); // Обновляем меню с новым балансом
     return ctx.answerCbQuery(`⭐ +1 звезда! Твой баланс: ${user.stars} звёзд.`, { show_alert: true });
   }
 
@@ -255,6 +255,7 @@ bot.on('callback_query', async (ctx) => {
     }
     db.run('UPDATE users SET stars = stars + 5, last_bonus = ? WHERE id = ?', [nowDay.toISOString(), id]);
     user = db.get('SELECT * FROM users WHERE id = ?', [id]);
+    await sendMainMenu(ctx, true); // Обновляем меню с новым балансом
     return ctx.answerCbQuery(`🎉 +5 звёзд! Твой баланс: ${user.stars} звёзд.`, { show_alert: true });
   }
 
@@ -557,7 +558,7 @@ bot.on('callback_query', async (ctx) => {
     const ticketText =
       `${type} #${ticket.ticket_id}\n\n` +
       `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
-      `🆔 <b>ID:</b> ${ticket.user_id}\n` +
+      `�ID: ${ticket.user_id}\n` +
       `📝 <b>Описание:</b> ${ticket.description || 'Без описания'}\n` +
       `${fileText}\n` +
       `📅 <b>Создан:</b> ${ticket.created_at}\n` +
@@ -609,7 +610,7 @@ bot.on('callback_query', async (ctx) => {
         const updatedText =
           `📋 <b>Заявка #${ticket.ticket_id}</b>\n\n` +
           `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
-          `🆔 <b>ID:</b> ${ticket.user_id}\n` +
+          `�ID: ${ticket.user_id}\n` +
           `📝 <b>Описание:</b> ${ticket.description || 'Без описания'}\n` +
           `📅 <b>Создан:</b> ${ticket.created_at}\n` +
           `📌 <b>Статус:</b> Одобрено ✅\n` +
@@ -723,7 +724,7 @@ bot.on('callback_query', async (ctx) => {
         const updatedText =
           `📞 <b>Тикет #${ticket.ticket_id}</b>\n\n` +
           `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
-          `🆔 <b>ID:</b> ${ticket.user_id}\n` +
+          `�ID: ${ticket.user_id}\n` +
           `📝 <b>Описание:</b> ${ticket.description}\n` +
           `📅 <b>Создан:</b> ${ticket.created_at}\n` +
           `📌 <b>Статус:</b> ${ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}`;
@@ -812,7 +813,7 @@ bot.on('message', async (ctx) => {
     const ticketText =
       `📋 <b>Заявка #${ticketId}</b>\n\n` +
       `👤 <b>Пользователь:</b> @${user.username || 'без ника'}\n` +
-      `🆔 <b>ID:</b> ${id}\n` +
+      `�ID: ${id}\n` +
       `📝 <b>Задание:</b> ${description}\n` +
       `📎 <b>Файл:</b> 1 шт.\n` +
       `📅 <b>Создан:</b> ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
@@ -829,7 +830,7 @@ bot.on('message', async (ctx) => {
     } catch (error) {
       console.error('Ошибка отправки фото в SUPPORT_CHANNEL:', error);
       db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]);
-      const msg = await ctx.reply('❌ Ошибка при создании заявки. Попробуй позже! 🛠', { parse_mode: 'HTML' });
+      const msg = await ctx.reply('❌ Ошибка при создания заявки. Попробуй позже! 🛠', { parse_mode: 'HTML' });
       deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForTaskScreenshot = null;
       return;
@@ -884,7 +885,7 @@ bot.on('message', async (ctx) => {
     const ticketText =
       `📞 <b>Тикет #${ticketId}</b>\n\n` +
       `👤 <b>Пользователь:</b> @${user.username || 'без ника'}\n` +
-      `🆔 <b>ID:</b> ${id}\n` +
+      `�ID: ${id}\n` +
       `📝 <b>Описание:</b> ${description}\n` +
       `📎 <b>Файлы:</b> ${fileIds.length > 0 ? fileIds.length + ' шт.' : 'Нет'}\n` +
       `📅 <b>Создан:</b> ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
@@ -983,7 +984,10 @@ bot.on('message', async (ctx) => {
     const msg = await ctx.reply(
       `✅ <b>Промокод активирован!</b> 🎉\n\n` +
       `Ты получил <b>${promo.reward} звёзд</b>! Твой баланс: ${user.stars} ⭐`,
-      { parse_mode: 'HTML' }
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
+      }
     );
     deleteNotification(ctx, msg.message_id);
     ctx.session.waitingForCode = false;
@@ -1054,7 +1058,7 @@ bot.on('message', async (ctx) => {
         const updatedText =
           `📞 <b>Тикет #${ticket.ticket_id}</b>\n\n` +
           `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
-          `🆔 <b>ID:</b> ${ticket.user_id}\n` +
+          `�ID: ${ticket.user_id}\n` +
           `📝 <b>Описание:</b> ${ticket.description}\n` +
           `📅 <b>Создан:</b> ${ticket.created_at}\n` +
           `📌 <b>Статус:</b> ${ticket.status}\n` +
