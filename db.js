@@ -82,7 +82,8 @@ function initDb() {
         name TEXT,
         description TEXT,
         condition_type TEXT,
-        condition_value INTEGER
+        condition_value INTEGER,
+        is_secret INTEGER DEFAULT 0
       )
     `);
 
@@ -92,66 +93,96 @@ function initDb() {
         name: 'Новичок',
         description: 'Только начал свой путь к звёздам!',
         condition_type: 'stars',
-        condition_value: 0
+        condition_value: 0,
+        is_secret: 0
       },
       {
         name: 'Звёздный Охотник',
         description: 'Собрал 50 звёзд!',
         condition_type: 'stars',
-        condition_value: 50
+        condition_value: 50,
+        is_secret: 0
       },
       {
         name: 'Космический Лидер',
         description: 'Собрал 100 звёзд!',
         condition_type: 'stars',
-        condition_value: 100
+        condition_value: 100,
+        is_secret: 0
       },
       {
         name: 'Галактический Герой',
         description: 'Собрал 500 звёзд!',
         condition_type: 'stars',
-        condition_value: 500
+        condition_value: 500,
+        is_secret: 0
       },
       {
         name: 'Призыватель',
         description: 'Пригласил 3 друзей!',
         condition_type: 'referrals',
-        condition_value: 3
+        condition_value: 3,
+        is_secret: 0
       },
       {
         name: 'Командующий',
         description: 'Пригласил 10 друзей!',
         condition_type: 'referrals',
-        condition_value: 10
+        condition_value: 10,
+        is_secret: 0
       },
       {
         name: 'Мастер Заданий',
         description: 'Выполнил 5 заданий!',
         condition_type: 'tasks',
-        condition_value: 5
+        condition_value: 5,
+        is_secret: 0
       },
       {
         name: 'Звёздный Странник',
         description: '10 дней подряд собирал бонусы!',
         condition_type: 'daily_streak',
-        condition_value: 10
+        condition_value: 10,
+        is_secret: 0
       },
       {
         name: 'Кодовый Гений',
         description: 'Активировал 3 промокода!',
         condition_type: 'promo_codes',
-        condition_value: 3
+        condition_value: 3,
+        is_secret: 0
+      },
+      {
+        name: 'Легенда Вселенной',
+        description: 'Секретный титул для избранных!',
+        condition_type: 'admin',
+        condition_value: 0,
+        is_secret: 1
+      },
+      {
+        name: 'Звёздный Архитектор',
+        description: 'Секретный титул для создателей звёзд!',
+        condition_type: 'admin',
+        condition_value: 0,
+        is_secret: 1
+      },
+      {
+        name: 'Космический Властелин',
+        description: 'Секретный титул для правителей галактики!',
+        condition_type: 'admin',
+        condition_value: 0,
+        is_secret: 1
       }
     ];
 
     const insertTitle = db.prepare(`
-      INSERT OR IGNORE INTO titles (name, description, condition_type, condition_value)
-      VALUES (?, ?, ?, ?)
+      INSERT OR IGNORE INTO titles (name, description, condition_type, condition_value, is_secret)
+      VALUES (?, ?, ?, ?, ?)
     `);
     initialTitles.forEach(title => {
-      const info = insertTitle.run(title.name, title.description, title.condition_type, title.condition_value);
+      const info = insertTitle.run(title.name, title.description, title.condition_type, title.condition_value, title.is_secret);
       if (info.changes) {
-        console.log(`Титул "${title.name}" создан с условием ${title.condition_type} >= ${title.condition_value}`);
+        console.log(`Титул "${title.name}" создан с условием ${title.condition_type} >= ${title.condition_value}, секретный: ${title.is_secret}`);
       }
     });
 
