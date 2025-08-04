@@ -7,7 +7,7 @@ const db = new Database(path.join(__dirname, 'bot.db'), { verbose: console.log }
 // Инициализация таблиц и начальных данных
 function initDb() {
   try {
-    // Таблица пользователей
+    // Таблица пользователей с новым полем last_menu_message_id
     db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
@@ -18,6 +18,7 @@ function initDb() {
         daily_streak INTEGER DEFAULT 0,
         referred_by INTEGER,
         title_id INTEGER,
+        last_menu_message_id INTEGER,
         FOREIGN KEY (title_id) REFERENCES titles(id)
       )
     `);
@@ -79,7 +80,7 @@ function initDb() {
         name TEXT,
         description TEXT,
         condition_type TEXT,
-        condition_value TEXT, -- Изменено на TEXT для хранения комбинированных условий
+        condition_value TEXT,
         is_secret INTEGER DEFAULT 0
       )
     `);
