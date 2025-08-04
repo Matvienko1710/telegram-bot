@@ -978,7 +978,8 @@ bot.on('message', async (ctx) => {
         await ctx.telegram.sendMessage(
           userId,
           `🏅 <b>Титул снят!</b>\n\nАдмин удалил твой титул. Продолжай зарабатывать звёзды! 🌟`,
-          { parse_mode: 'HTML'        ).catch(err => console.error(`Ошибка уведомления пользователя ${userId}:`, err));
+          { parse_mode: 'HTML' }       
+          ).catch(err => console.error(`Ошибка уведомления пользователя ${userId}:`, err));
         ctx.session.waitingFor = {};
         return ctx.reply(
           `✅ <b>Титул снят!</b>\n\nПользователь: ${userId}`,
