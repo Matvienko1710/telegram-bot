@@ -14,7 +14,7 @@ bot.use(session());
 // Ссылки и настройки из .env
 const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@magnumtap';
 const TASK_CHANNEL = process.env.TASK_CHANNEL || '@musice46';
-const TASK_CHANNEL_KITTY = process.env.TASK_CHANNEL_KITTY || '@kittyyyyywwr'; // Новый канал
+const TASK_CHANNEL_KITTY = process.env.TASK_CHANNEL_KITTY || '@kittyyyyywwr';
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot?start=6587897295';
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(id => parseInt(id)) : [6587897295];
 const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@magnumsupported';
@@ -81,7 +81,7 @@ function initTasks() {
   const initialTasks = [
     { type: 'subscribe_channel', description: 'Подписаться на канал', goal: 1, reward: 10 },
     { type: 'start_bot', description: 'Запустить бота', goal: 1, reward: 5 },
-    { type: 'subscribe_channel_kittyyyyywwr', description: 'Подписаться на канал', goal: 1, reward: 10 }, // Новое задание
+    { type: 'subscribe_channel_kittyyyyywwr', description: 'Подписаться на канал', goal: 1, reward: 10 },
   ];
 
   initialTasks.forEach(task => {
@@ -385,7 +385,7 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin_tickets') {
-    const tickets = db.all('SELECT * FROM tickets WHERE status NOT IN (?, ?) ORDER BY created_at DESC LIMIT 10', ['closed', 'rejected']);
+    const tickets = db.all('SELECT * FROM tickets WHERE status IN (?, ?) ORDER BY created_at DESC LIMIT 10', ['open', 'in_progress']);
     if (tickets.length === 0) {
       await ctx.reply('📞 Нет открытых тикетов или заявок.', Markup.inlineKeyboard([
         [Markup.button.callback('🔙 Назад', 'back')]
@@ -510,7 +510,7 @@ bot.on('callback_query', async (ctx) => {
         const updatedText =
           `📋 Заявка #${ticket.ticket_id}\n` +
           `👤 Пользователь: @${ticket.username || 'без ника'}\n` +
-          `🆔 ID: ${ticket.user_id}\n` +
+          `�ID: ${ticket.user_id}\n` +
           `📝 Описание: ${ticket.description || 'Без описания'}\n` +
           `📅 Создан: ${ticket.created_at}\n` +
           `📌 Статус: Отклонено`;
@@ -661,7 +661,7 @@ bot.on('message', async (ctx) => {
       await ctx.telegram.sendPhoto(SUPPORT_CHANNEL, fileId, { caption: `Скриншот для заявки #${ticketId}` });
     } catch (error) {
       console.error('Ошибка отправки фото в SUPPORT_CHANNEL:', error);
-      db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]); // Откат заявки
+      db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]);
       const msg = await ctx.reply('❌ Ошибка при создании заявки. Попробуйте позже.');
       deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForTaskScreenshot = null;
@@ -725,7 +725,7 @@ bot.on('message', async (ctx) => {
       }
     } catch (error) {
       console.error('Ошибка отправки в SUPPORT_CHANNEL:', error);
-      db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]); // Откат тикета
+      db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]);
       const msg = await ctx.reply('❌ Ошибка при создании тикета. Попробуйте позже.');
       deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForSupport = false;
