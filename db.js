@@ -1,18 +1,10 @@
 const Database = require('better-sqlite3');
-const path = require('path');
+const db = new Database('bot.db', { verbose: console.log });
 
-let db;
-
-// Инициализация базы данных
-function initializeDatabase() {
+function initDb() {
   try {
-    db = new Database(path.resolve(__dirname, 'database.db'), { verbose: (msg) => console.log(`[SQLite] ${msg}`) });
-
-    // Проверка целостности базы данных
-    db.prepare('PRAGMA integrity_check').run();
-
-    // Таблица users: хранит информацию о пользователях
-    db.prepare(`
+    // Создание таблицы users
+    db.exec(`
       CREATE TABLE IF NOT EXISTS users (
         id INTEGER PRIMARY KEY,
         username TEXT,
@@ -20,49 +12,42 @@ function initializeDatabase() {
         last_farm INTEGER DEFAULT 0,
         last_bonus TEXT,
         referred_by INTEGER,
-        FOREIGN KEY (referred_by) REFERENCES users(id)
+        title_id INTEGER,
+        daily_streak INTEGER DEFAULT 0,
+        FOREIGN KEY (referred_by) REFERENCES users(id),
+        FOREIGN KEY (title_id) REFERENCES titles(id)
       )
-    `).run();
+    `);
 
-    // Таблица promo_codes: хранит промокоды
-    db.prepare(`
-      CREATE TABLE IF NOT EXISTS promo_codes (
-        code TEXT PRIMARY KEY,
-        reward INTEGER,
-        activations_left INTEGER,
-        used_by TEXT DEFAULT '[]'
-      )
-    `).run();
-
-    // Таблица tickets: хранит тикеты и заявки на задания
-    db.prepare(`
+    // Создание таблицы tickets
+    db.exec(`
       CREATE TABLE IF NOT EXISTS tickets (
         ticket_id INTEGER PRIMARY KEY AUTOINCREMENT,
         user_id INTEGER,
         username TEXT,
         description TEXT,
-        status TEXT DEFAULT 'open',
         created_at TEXT,
         file_id TEXT,
         channel_message_id INTEGER,
         task_type TEXT,
+        status TEXT DEFAULT 'open',
         FOREIGN KEY (user_id) REFERENCES users(id)
       )
-    `).run();
+    `);
 
-    // Таблица tasks: хранит задания
-    db.prepare(`
+    // Создание таблицы tasks
+    db.exec(`
       CREATE TABLE IF NOT EXISTS tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        type TEXT UNIQUE NOT NULL,
-        description TEXT NOT NULL,
-        goal INTEGER NOT NULL,
-        reward INTEGER NOT NULL
+        type TEXT UNIQUE,
+        description TEXT,
+        goal INTEGER,
+        reward INTEGER
       )
-    `).run();
+    `);
 
-    // Таблица user_tasks: хранит прогресс пользователей по заданиям
-    db.prepare(`
+    // Создание таблицы user_tasks
+    db.exec(`
       CREATE TABLE IF NOT EXISTS user_tasks (
         user_id INTEGER,
         task_id INTEGER,
@@ -72,69 +57,69 @@ function initializeDatabase() {
         FOREIGN KEY (user_id) REFERENCES users(id),
         FOREIGN KEY (task_id) REFERENCES tasks(id)
       )
-    `).run();
+    `);
 
-    // Создание индексов для оптимизации
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_user_tasks_user_id ON user_tasks(user_id)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_tasks_type ON tasks(type)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_tickets_user_id ON tickets(user_id)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_tickets_status ON tickets(status)').run();
-    db.prepare('CREATE INDEX IF NOT EXISTS idx_tickets_task_type ON tickets(task_type)').run();
+    // Создание таблицы promo_codes
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS promo_codes (
+        code TEXT PRIMARY KEY,
+        reward INTEGER,
+        activations_left INTEGER,
+        used_by TEXT
+      )
+    `);
+
+    // Создание таблицы titles
+    db.exec(`
+      CREATE TABLE IF NOT EXISTS titles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL,
+        condition_type TEXT NOT NULL,
+        condition_value INTEGER NOT NULL,
+        description TEXT
+      )
+    `);
+
+    // Инициализация титулов
+    const initialTitles = [
+      { name: 'Звёздный Новичок', condition_type: 'stars', condition_value: 10, description: 'Первый шаг в мир Magnum Stars!' },
+      { name: 'Звёздный Искры', condition_type: 'stars', condition_value: 50, description: 'Ты начинаешь сиять ярче!' },
+      { name: 'Звёздный Герой', condition_type: 'stars', condition_value: 100, description: 'Настоящий герой звёздного неба!' },
+      { name: 'Звёздный Мастер', condition_type: 'stars', condition_value: 500, description: 'Ты овладел искусством сбора звёзд!' },
+      { name: 'Звёздная Легенда', condition_type: 'stars', condition_value: 1000, description: 'Ты вошёл в историю Magnum Stars!' },
+      { name: 'Дружелюбный Охотник', condition_type: 'referrals', condition_value: 1, description: 'Ты привёл друга в звёздное приключение!' },
+      { name: 'Звёздный Рекрутёр', condition_type: 'referrals', condition_value: 5, description: 'Твоя команда растёт!' },
+      { name: 'Лидер Галактики', condition_type: 'referrals', condition_value: 20, description: 'Ты собираешь целую галактику друзей!' },
+      { name: 'Исполнитель Миссий', condition_type: 'tasks', condition_value: 1, description: 'Ты успешно выполнил свою первую миссию!' },
+      { name: 'Звёздный Исследователь', condition_type: 'tasks', condition_value: 5, description: 'Ты исследуешь все уголки Magnum Stars!' },
+      { name: 'Ежедневный Чемпион', condition_type: 'daily_streak', condition_value: 7, description: 'Твоя регулярность впечатляет!' },
+      { name: 'Промо-Охотник', condition_type: 'promo_codes', condition_value: 3, description: 'Ты находишь секретные коды как охотник!' },
+    ];
+
+    initialTitles.forEach(title => {
+      const exists = db.prepare('SELECT * FROM titles WHERE name = ?').get([title.name]);
+      if (!exists) {
+        db.prepare('INSERT INTO titles (name, condition_type, condition_value, description) VALUES (?, ?, ?, ?)').run(
+          title.name,
+          title.condition_type,
+          title.condition_value,
+          title.description
+        );
+        console.log(`Титул "${title.name}" создан с условием "${title.condition_type}: ${title.condition_value}"`);
+      }
+    });
 
     console.log('База данных инициализирована успешно.');
-  } catch (error) {
-    console.error('Ошибка инициализации базы данных:', error.message);
+  } catch (err) {
+    console.error('Ошибка инициализации базы данных:', err);
     process.exit(1);
   }
 }
 
-// Экспорт методов
+initDb();
+
 module.exports = {
-  prepare: (query) => {
-    try {
-      return db.prepare(query);
-    } catch (error) {
-      console.error(`Ошибка подготовки запроса: ${query}`, error.message);
-      throw error;
-    }
-  },
-  run: (query, params = []) => {
-    try {
-      return db.prepare(query).run(params);
-    } catch (error) {
-      console.error(`Ошибка выполнения запроса: ${query}`, { params, error: error.message });
-      throw error;
-    }
-  },
-  get: (query, params = []) => {
-    try {
-      return db.prepare(query).get(params);
-    } catch (error) {
-      console.error(`Ошибка получения записи: ${query}`, { params, error: error.message });
-      throw error;
-    }
-  },
-  all: (query, params = []) => {
-    try {
-      return db.prepare(query).all(params);
-    } catch (error) {
-      console.error(`Ошибка получения записей: ${query}`, { params, error: error.message });
-      throw error;
-    }
-  },
+  get: db.prepare.bind(db),
+  run: db.prepare.bind(db),
+  all: db.prepare.bind(db).all.bind(db),
 };
-
-// Инициализация при загрузке модуля
-initializeDatabase();
-
-// Закрытие базы данных при завершении процесса
-process.on('SIGINT', () => {
-  try {
-    db.close();
-    console.log('База данных закрыта.');
-    process.exit(0);
-  } catch (error) {
-    console.error('Ошибка закрытия базы данных:', error.message);
-    process.exit(1);
-  }
-});
