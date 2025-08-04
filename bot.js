@@ -65,6 +65,7 @@ function updateUserTitle(ctx, userId) {
       `🎉 Поздравляем! Ты получил титул <b>${newTitle.name}</b>! 🌟\n\n<i>${newTitle.description}</i>`,
       { parse_mode: 'HTML' }
     );
+    console.log(`Пользователь ${userId} получил титул "${newTitle.name}" (описание: "${newTitle.description}")`);
   }
 }
 
