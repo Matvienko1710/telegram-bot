@@ -4,7 +4,7 @@ const path = require('path');
 // Инициализация базы данных SQLite
 const db = new sqlite3.Database(path.join(__dirname, 'bot.db'), (err) => {
   if (err) {
-    console.error('Ошибка подключения к базе данных:', err);
+    console.error('Детальная ошибка подключения к SQLite:', err.message, err.stack);
     process.exit(1);
   }
   console.log('Подключение к базе данных SQLite успешно.');
@@ -160,19 +160,19 @@ function initDb() {
     const initialTasks = [
       {
         type: 'subscribe_channel',
-        description: `Подпишись на канал ${process.env.TASK_CHANNEL}`,
+        description: `Подпишись на канал ${process.env.TASK_CHANNEL || '@musice46'}`,
         goal: 1,
         reward: 5
       },
       {
         type: 'subscribe_channel_kittyyyyywwr',
-        description: `Подпишись на канал ${process.env.TASK_CHANNEL_KITTY}`,
+        description: `Подпишись на канал ${process.env.TASK_CHANNEL_KITTY || '@kittyyyyywwr'}`,
         goal: 1,
         reward: 5
       },
       {
         type: 'start_bot',
-        description: `Запусти бота по ссылке ${process.env.TASK_BOT_LINK}`,
+        description: `Запусти бота по ссылке ${process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot'}`,
         goal: 1,
         reward: 10
       }
