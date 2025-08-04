@@ -34,7 +34,7 @@ function updateUserTitle(ctx, userId) {
   const promoCodesUsed = db.get('SELECT COUNT(*) as count FROM promo_codes WHERE used_by LIKE ?', [`%${userId}%`]).count || 0;
   const dailyStreak = user.daily_streak || 0;
 
-  const titles = db.all('SELECT * FROM titles ORDER BY condition_value DESC', []);
+  const titles = db.all('SELECT * FROM titles WHERE is_secret = 0 ORDER BY condition_value DESC', []);
   if (!Array.isArray(titles)) {
     console.error('Ошибка: titles не является массивом', titles);
     return;
@@ -193,6 +193,8 @@ bot.start(async (ctx) => {
   ctx.session.waitingForTask = false;
   ctx.session.waitingForTicketReply = false;
   ctx.session.broadcast = false;
+  ctx.session.waitingForStars = false;
+  ctx.session.waitingForTitle = false;
 
   const id = ctx.from.id;
   const username = ctx.from.username || ctx.from.first_name || 'без ника';
@@ -342,7 +344,8 @@ bot.on('callback_query', async (ctx) => {
       console.log('Задания:', tasks); // Для отладки
       if (tasks.length === 0) {
         await ctx.editMessageText(
-          `📋 <b>Заданий пока нет!</b>\n\n<i>Новые задания скоро появятся, следи за обновлениями в ${process.env.BOT_NAME}!</i>`,
+          `📋 <b>Заданий пока нет!</b>\n\n<i>Новые задания скоро появятся, следи за обновлениями в suon:1
+          в ${process.env.BOT_NAME}!</i>`,
           {
             parse_mode: 'HTML',
             ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
@@ -542,23 +545,20 @@ bot.on('callback_query', async (ctx) => {
         [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
         [Markup.button.callback('➕ Добавить задание', 'admin_addtask')],
         [Markup.button.callback('📞 Тикеты и заявки', 'admin_tickets')],
+        [Markup.button.callback('⭐ Управление звёздами', 'admin_stars')],
+        [Markup.button.callback('🏅 Управление титулами', 'admin_titles')],
         [Markup.button.callback('🔙 В меню', 'back')]
       ]);
       try {
-        // Проверяем, можно ли отредактировать текущее сообщение
         if (ctx.callbackQuery.message) {
           try {
             await ctx.editMessageText(adminPanelText, { parse_mode: 'HTML', ...adminPanelMarkup });
           } catch (editErr) {
             console.error('Ошибка редактирования сообщения для админ-панели:', editErr);
-            // Если редактирование не удалось, отправляем новое сообщение
             const msg = await ctx.reply(adminPanelText, { parse_mode: 'HTML', ...adminPanelMarkup });
-            // Не удаляем админ-панель автоматически
           }
         } else {
-          // Если сообщения нет, отправляем новое
           const msg = await ctx.reply(adminPanelText, { parse_mode: 'HTML', ...adminPanelMarkup });
-          // Не удаляем админ-панель автоматически
         }
         await ctx.answerCbQuery();
       } catch (err) {
@@ -637,6 +637,38 @@ bot.on('callback_query', async (ctx) => {
         `➕ <b>Добавить задание</b>\n\n` +
         `Введи данные в формате: <code>ТИП ОПИСАНИЕ ЦЕЛЬ НАГРАДА</code>\n` +
         `Пример: <code>subscribe_channel Подпишись на ${TASK_CHANNEL} 1 5</code>`,
+        { parse_mode: 'HTML' }
+      );
+      deleteNotification(ctx, msg.message_id);
+      return;
+    }
+
+    if (action === 'admin_stars') {
+      if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery(`⛔ Доступ только для админов ${process.env.BOT_NAME}!`, { show_alert: true });
+      ctx.session.waitingForStars = true;
+      const msg = await ctx.reply(
+        `⭐ <b>Управление звёздами</b>\n\n` +
+        `Введи данные в формате: <code>ID_ПОЛЬЗОВАТЕЛЯ КОЛИЧЕСТВО</code>\n` +
+        `Пример: <code>123456789 50</code> для выдачи 50 звёзд или <code>123456789 -50</code> для снятия 50 звёзд`,
+        { parse_mode: 'HTML' }
+      );
+      deleteNotification(ctx, msg.message_id);
+      return;
+    }
+
+    if (action === 'admin_titles') {
+      if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery(`⛔ Доступ только для админов ${process.env.BOT_NAME}!`, { show_alert: true });
+      ctx.session.waitingForTitle = true;
+      const secretTitles = db.all('SELECT id, name FROM titles WHERE is_secret = 1', []);
+      const titleList = secretTitles.length > 0
+        ? secretTitles.map(t => `${t.id}. ${t.name}`).join('\n')
+        : '😔 Нет секретных титулов.';
+      const msg = await ctx.reply(
+        `🏅 <b>Управление титулами</b>\n\n` +
+        `Список секретных титулов:\n${titleList}\n\n` +
+        `Введи данные в формате: <code>ID_ПОЛЬЗОВАТЕЛЯ ID_ТИТУЛА</code>\n` +
+        `Пример: <code>123456789 10</code>\n` +
+        `Для снятия титула укажи ID титула 0: <code>123456789 0</code>`,
         { parse_mode: 'HTML' }
       );
       deleteNotification(ctx, msg.message_id);
@@ -782,7 +814,7 @@ bot.on('callback_query', async (ctx) => {
       if (!ticket) return ctx.answerCbQuery('❌ Заявка не найдена!', { show_alert: true });
       db.run('UPDATE tickets SET status = ? WHERE ticket_id = ?', ['rejected', ticketId]);
       const task = db.get('SELECT id FROM tasks WHERE type = ?', [ticket.task_type]);
-      if (talk) {
+      if (task) { // Исправлено: talk -> task
         db.run('DELETE FROM user_tasks WHERE user_id = ? AND task_id = ?', [ticket.user_id, task.id]);
       }
       if (ticket.channel_message_id) {
@@ -901,7 +933,7 @@ bot.on('callback_query', async (ctx) => {
     console.error('Ошибка в обработчике callback_query:', err);
     await ctx.answerCbQuery('❌ Произошла ошибка, попробуй снова!', { show_alert: true });
   } finally {
-    if (!['admin', 'admin_stats', 'admin_top', 'admin_broadcast', 'admin_addcode', 'admin_addtask', 'admin_tickets', 'ticket_', 'view_files_', 'approve_task_', 'reject_task_', 'reply_ticket_', 'set_ticket_status_'].some(prefix => action.startsWith(prefix))) {
+    if (!['admin', 'admin_stats', 'admin_top', 'admin_broadcast', 'admin_addcode', 'admin_addtask', 'admin_stars', 'admin_titles', 'ticket_', 'view_files_', 'approve_task_', 'reject_task_', 'reply_ticket_', 'set_ticket_status_'].some(prefix => action.startsWith(prefix))) {
       await ctx.answerCbQuery();
     }
   }
@@ -921,6 +953,8 @@ bot.on('message', async (ctx) => {
     ctx.session.waitingForTask = false;
     ctx.session.waitingForTaskScreenshot = null;
     ctx.session.waitingForTicketReply = false;
+    ctx.session.waitingForStars = false;
+    ctx.session.waitingForTitle = false;
     const msg = await ctx.reply(`❌ Начни с команды /start, чтобы войти в ${process.env.BOT_NAME}! 🚀`);
     deleteNotification(ctx, msg.message_id);
     return;
@@ -966,8 +1000,8 @@ bot.on('message', async (ctx) => {
       const ticketText =
         `📋 <b>Заявка #${ticketId}</b>\n\n` +
         `👤 <b>Пользователь:</b> @${user.username || 'без ника'}\n` +
-        `🆔 ID: ${id}\n` +
-        `📝 <b>Задание:</b> ${description}\n` +
+        `�ID: ${id}\n` +
+        `📝 <b>Описание:</b> ${description}\n` +
         `📎 <b>Файл:</b> 1 шт.\n` +
         `📅 <b>Создан:</b> ${dayjs().format('YYYY-MM-DD HH:mm:ss')}\n` +
         `📌 <b>Статус:</b> Открыт`;
@@ -1118,27 +1152,23 @@ bot.on('message', async (ctx) => {
       if (promo.activations_left === 0) {
         const msg = await ctx.reply(`⚠️ <b>Промокод исчерпан!</b>\n\nИщи новые коды в наших каналах ${process.env.BOT_NAME}! 📢`, { parse_mode: 'HTML' });
         deleteNotification(ctx, msg.message_id);
-        ctx.session.waitingForCode = false;
+                ctx.session.waitingForCode = false;
         return;
       }
-      let usedBy = promo.used_by ? JSON.parse(promo.used_by) : [];
+      const usedBy = JSON.parse(promo.used_by || '[]');
       if (usedBy.includes(id)) {
-        const msg = await ctx.reply('⚠️ <b>Ты уже использовал этот промокод!</b>\n\nПопробуй другой. 💡', { parse_mode: 'HTML' });
+        const msg = await ctx.reply(`⚠️ <b>Ты уже использовал этот промокод!</b>\n\nПопробуй другой код в ${process.env.BOT_NAME}! 💡`, { parse_mode: 'HTML' });
         deleteNotification(ctx, msg.message_id);
         ctx.session.waitingForCode = false;
         return;
       }
-      db.run('UPDATE users SET stars = stars + ? WHERE id = ?', [promo.reward, id]);
       usedBy.push(id);
-      db.run('UPDATE promo_codes SET activations_left = ?, used_by = ? WHERE code = ?', [
-        promo.activations_left - 1,
-        JSON.stringify(usedBy),
-        code
-      ]);
+      db.run('UPDATE promo_codes SET activations_left = activations_left - 1, used_by = ? WHERE code = ?', [JSON.stringify(usedBy), code]);
+      db.run('UPDATE users SET stars = stars + ? WHERE id = ?', [promo.reward, id]);
       user = db.get('SELECT * FROM users WHERE id = ?', [id]);
       updateUserTitle(ctx, id);
       const msg = await ctx.reply(
-        `✅ <b>Промокод активирован!</b> 🎉\n\n` +
+        `🎉 <b>Промокод активирован!</b>\n\n` +
         `Ты получил <b>${promo.reward} звёзд</b>! Твой баланс: ${user.stars} ⭐`,
         {
           parse_mode: 'HTML',
@@ -1151,92 +1181,180 @@ bot.on('message', async (ctx) => {
     }
 
     if (ctx.session?.waitingForPromo && ADMIN_IDS.includes(id)) {
-      const parts = ctx.message.text.trim().split(/\s+/);
-      if (parts.length !== 3) {
-        const msg = await ctx.reply(
-          '⚠️ <b>Неверный формат!</b>\n\n' +
-          'Используй: <code>КОД ЗВЁЗДЫ АКТИВАЦИИ</code>\n' +
-          'Пример: <code>STAR2025 10 5</code>',
-          { parse_mode: 'HTML' }
-        );
-        deleteNotification(ctx, msg.message_id);
-        return;
-      }
-      const [code, rewardStr, activationsStr] = parts;
-      const reward = parseInt(rewardStr);
-      const activations = parseInt(activationsStr);
+      const [code, reward, activations] = ctx.message.text.trim().split(' ');
       if (!code || isNaN(reward) || isNaN(activations)) {
         const msg = await ctx.reply(
-          '⚠️ <b>Неверный формат!</b>\n\n' +
-          'Используй: <code>КОД ЗВЁЗДЫ АКТИВАЦИИ</code>\n' +
-          'Пример: <code>STAR2025 10 5</code>',
-          { parse_mode: 'HTML' }
-        );
-        deleteNotification(ctx, msg.message_id);
-        return;
-      }
-      try {
-        db.run('INSERT INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)', [
-          code,
-          reward,
-          activations,
-          JSON.stringify([])
-        ]);
-        const msg = await ctx.reply(
-          `✅ <b>Промокод "${code}"</b> добавлен! 🎉\n\n` +
-          `Награда: ${reward} звёзд, активаций: ${activations}.`,
+          `❌ <b>Неверный формат!</b>\n\n` +
+          `Используй: <code>КОД ЗВЁЗДЫ АКТИВАЦИИ</code>\n` +
+          `Пример: <code>STAR2025 10 5</code>`,
           { parse_mode: 'HTML' }
         );
         deleteNotification(ctx, msg.message_id);
         ctx.session.waitingForPromo = false;
-      } catch (err) {
-        console.error('Ошибка добавления промокода:', err);
-        const msg = await ctx.reply('❌ Ошибка при добавлении промокода. Проверь уникальность кода!', { parse_mode: 'HTML' });
-        deleteNotification(ctx, msg.message_id);
+        return;
       }
+      db.run('INSERT OR REPLACE INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)', [code, parseInt(reward), parseInt(activations), JSON.stringify([])]);
+      const msg = await ctx.reply(
+        `✅ <b>Промокод создан!</b>\n\n` +
+        `Код: ${code}\n` +
+        `Награда: ${reward} звёзд\n` +
+        `Активаций: ${activations}`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
+        }
+      );
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForPromo = false;
       return;
     }
 
     if (ctx.session?.waitingForTask && ADMIN_IDS.includes(id)) {
-      const parts = ctx.message.text.trim().split(/\s+/);
-      if (parts.length < 4) {
-        const msg = await ctx.reply(
-          `⚠️ <b>Неверный формат!</b>\n\n` +
-          `Используй: <code>ТИП ОПИСАНИЕ ЦЕЛЬ НАГРАДА</code>\n` +
-          `Пример: <code>subscribe_channel Подпишись на ${TASK_CHANNEL} 1 5</code>`,
-          { parse_mode: 'HTML' }
-        );
-        deleteNotification(ctx, msg.message_id);
-        return;
-      }
-      const [type, ...rest] = parts;
+      const [type, ...rest] = ctx.message.text.trim().split(' ');
       const description = rest.slice(0, -2).join(' ');
       const goal = parseInt(rest[rest.length - 2]);
       const reward = parseInt(rest[rest.length - 1]);
-      if (!type || isNaN(goal) || isNaN(reward)) {
+      if (!type || !description || isNaN(goal) || isNaN(reward)) {
         const msg = await ctx.reply(
-          `⚠️ <b>Неверный формат!</b>\n\n` +
+          `❌ <b>Неверный формат!</b>\n\n` +
           `Используй: <code>ТИП ОПИСАНИЕ ЦЕЛЬ НАГРАДА</code>\n` +
           `Пример: <code>subscribe_channel Подпишись на ${TASK_CHANNEL} 1 5</code>`,
-          { parse_mode: 'HTML' }
-        );
-        deleteNotification(ctx, msg.message_id);
-        return;
-      }
-      try {
-        db.run('INSERT INTO tasks (type, description, goal, reward) VALUES (?, ?, ?, ?)', [type, description, goal, reward]);
-        const msg = await ctx.reply(
-          `✅ <b>Задание "${description}"</b> добавлено! 🎉\n\n` +
-          `Тип: ${type}, Цель: ${goal}, Награда: ${reward} звёзд.`,
           { parse_mode: 'HTML' }
         );
         deleteNotification(ctx, msg.message_id);
         ctx.session.waitingForTask = false;
-      } catch (err) {
-        console.error('Ошибка добавления задания:', err);
-        const msg = await ctx.reply('❌ Ошибка при добавлении задания. Проверь формат и уникальность типа!', { parse_mode: 'HTML' });
+        return;
+      }
+      db.run('INSERT OR REPLACE INTO tasks (type, description, goal, reward) VALUES (?, ?, ?, ?)', [type, description, goal, reward]);
+      const msg = await ctx.reply(
+        `✅ <b>Задание создано!</b>\n\n` +
+        `Тип: ${type}\n` +
+        `Описание: ${description}\n` +
+        `Цель: ${goal}\n` +
+        `Награда: ${reward} звёзд`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
+        }
+      );
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForTask = false;
+      return;
+    }
+
+    if (ctx.session?.waitingForStars && ADMIN_IDS.includes(id)) {
+      const [userId, stars] = ctx.message.text.trim().split(' ').map(s => parseInt(s));
+      if (isNaN(userId) || isNaN(stars)) {
+        const msg = await ctx.reply(
+          `❌ <b>Неверный формат!</b>\n\n` +
+          `Используй: <code>ID_ПОЛЬЗОВАТЕЛЯ КОЛИЧЕСТВО</code>\n` +
+          `Пример: <code>123456789 50</code> или <code>123456789 -50</code>`,
+          { parse_mode: 'HTML' }
+        );
+        deleteNotification(ctx, msg.message_id);
+        ctx.session.waitingForStars = false;
+        return;
+      }
+      const targetUser = db.get('SELECT * FROM users WHERE id = ?', [userId]);
+      if (!targetUser) {
+        const msg = await ctx.reply(`❌ Пользователь с ID ${userId} не найден!`, { parse_mode: 'HTML' });
+        deleteNotification(ctx, msg.message_id);
+        ctx.session.waitingForStars = false;
+        return;
+      }
+      const newStars = Math.max(0, targetUser.stars + stars);
+      db.run('UPDATE users SET stars = ? WHERE id = ?', [newStars, userId]);
+      updateUserTitle(ctx, userId);
+      const actionText = stars >= 0 ? `выдано ${stars} звёзд` : `снято ${Math.abs(stars)} звёзд`;
+      await ctx.telegram.sendMessage(
+        userId,
+        `⭐ <b>Обновление баланса!</b>\n\n` +
+        `Админ ${actionText}. Твой баланс: ${newStars} звёзд.`,
+        { parse_mode: 'HTML' }
+      ).catch(err => console.error(`Ошибка уведомления пользователя ${userId}:`, err));
+      const msg = await ctx.reply(
+        `✅ <b>Звёзды обновлены!</b>\n\n` +
+        `Пользователь: ${userId}\n` +
+        `Действие: ${actionText}\n` +
+        `Новый баланс: ${newStars} звёзд`,
+        {
+          parse_mode: 'HTML',
+          ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
+        }
+      );
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForStars = false;
+      return;
+    }
+
+    if (ctx.session?.waitingForTitle && ADMIN_IDS.includes(id)) {
+      const [userId, titleId] = ctx.message.text.trim().split(' ').map(s => parseInt(s));
+      if (isNaN(userId) || isNaN(titleId)) {
+        const msg = await ctx.reply(
+          `❌ <b>Неверный формат!</b>\n\n` +
+          `Используй: <code>ID_ПОЛЬЗОВАТЕЛЯ ID_ТИТУЛА</code>\n` +
+          `Пример: <code>123456789 10</code> или <code>123456789 0</code> для снятия`,
+          { parse_mode: 'HTML' }
+        );
+        deleteNotification(ctx, msg.message_id);
+        ctx.session.waitingForTitle = false;
+        return;
+      }
+      const targetUser = db.get('SELECT * FROM users WHERE id = ?', [userId]);
+      if (!targetUser) {
+        const msg = await ctx.reply(`❌ Пользователь с ID ${userId} не найден!`, { parse_mode: 'HTML' });
+        deleteNotification(ctx, msg.message_id);
+        ctx.session.waitingForTitle = false;
+        return;
+      }
+      if (titleId !== 0) {
+        const title = db.get('SELECT * FROM titles WHERE id = ? AND is_secret = 1', [titleId]);
+        if (!title) {
+          const msg = await ctx.reply(
+            `❌ Титул с ID ${titleId} не найден или не является секретным!`,
+            { parse_mode: 'HTML' }
+          );
+          deleteNotification(ctx, msg.message_id);
+          ctx.session.waitingForTitle = false;
+          return;
+        }
+        db.run('UPDATE users SET title_id = ? WHERE id = ?', [titleId, userId]);
+        await ctx.telegram.sendMessage(
+          userId,
+          `🏅 <b>Новый титул!</b>\n\n` +
+          `Админ присвоил тебе секретный титул: <b>${title.name}</b> (${title.description})`,
+          { parse_mode: 'HTML' }
+        ).catch(err => console.error(`Ошибка уведомления пользователя ${userId}:`, err));
+        const msg = await ctx.reply(
+          `✅ <b>Титул присвоен!</b>\n\n` +
+          `Пользователь: ${userId}\n` +
+          `Титул: ${title.name}`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
+          }
+        );
+        deleteNotification(ctx, msg.message_id);
+      } else {
+        db.run('UPDATE users SET title_id = NULL WHERE id = ?', [userId]);
+        await ctx.telegram.sendMessage(
+          userId,
+          `🏅 <b>Титул снят!</b>\n\n` +
+          `Админ удалил твой титул. Продолжай зарабатывать звёзды! 🌟`,
+          { parse_mode: 'HTML' }
+        ).catch(err => console.error(`Ошибка уведомления пользователя ${userId}:`, err));
+        const msg = await ctx.reply(
+          `✅ <b>Титул снят!</b>\n\n` +
+          `Пользователь: ${userId}`,
+          {
+            parse_mode: 'HTML',
+            ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
+          }
+        );
         deleteNotification(ctx, msg.message_id);
       }
+      updateUserTitle(ctx, userId);
+      ctx.session.waitingForTitle = false;
       return;
     }
 
@@ -1244,20 +1362,20 @@ bot.on('message', async (ctx) => {
       const ticketId = ctx.session.waitingForTicketReply;
       const ticket = db.get('SELECT * FROM tickets WHERE ticket_id = ?', [ticketId]);
       if (!ticket) {
-        const msg = await ctx.reply('❌ <b>Тикет не найден!</b>', { parse_mode: 'HTML' });
+        const msg = await ctx.reply(`❌ Тикет #${ticketId} не найден!`, { parse_mode: 'HTML' });
         deleteNotification(ctx, msg.message_id);
         ctx.session.waitingForTicketReply = false;
         return;
       }
-      const replyText = ctx.message.text || 'Без текста';
-      const fileIds = [];
-      if (ctx.message.photo) {
-        const photo = ctx.message.photo[ctx.message.photo.length - 1];
-        fileIds.push(photo.file_id);
-      }
-      if (ctx.message.document) {
-        fileIds.push(ctx.message.document.file_id);
-      }
+      const replyText = ctx.message.text;
+      await ctx.telegram.sendMessage(
+        ticket.user_id,
+        `📞 <b>Ответ на тикет #${ticketId}</b>\n\n` +
+        `${replyText}\n\n` +
+        `<i>Если есть вопросы, создай новый тикет через раздел "Поддержка" в ${process.env.BOT_NAME}!</i>`,
+        { parse_mode: 'HTML' }
+      ).catch(err => console.error(`Ошибка отправки ответа пользователю ${ticket.user_id}:`, err));
+      db.run('UPDATE tickets SET status = ? WHERE ticket_id = ?', ['closed', ticketId]);
       if (ticket.channel_message_id) {
         try {
           const updatedText =
@@ -1265,9 +1383,10 @@ bot.on('message', async (ctx) => {
             `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
             `🆔 ID: ${ticket.user_id}\n` +
             `📝 <b>Описание:</b> ${ticket.description}\n` +
+            `📎 <b>Файлы:</b> ${ticket.file_id && JSON.parse(ticket.file_id).length > 0 ? JSON.parse(ticket.file_id).length + ' шт.' : 'Нет'}\n` +
             `📅 <b>Создан:</b> ${ticket.created_at}\n` +
-            `📌 <b>Статус:</b> ${ticket.status}\n` +
-            `\n✍️ <b>Ответ:</b> ${replyText}`;
+            `📌 <b>Статус:</b> Закрыт\n` +
+            `✍️ <b>Ответ админа:</b> ${replyText}`;
           await ctx.telegram.editMessageText(
             SUPPORT_CHANNEL,
             ticket.channel_message_id,
@@ -1275,23 +1394,13 @@ bot.on('message', async (ctx) => {
             updatedText,
             { parse_mode: 'HTML' }
           );
-          if (fileIds.length > 0) {
-            for (const fileId of fileIds) {
-              await ctx.telegram.sendPhoto(SUPPORT_CHANNEL, fileId, { caption: `📷 Скриншот к ответу #${ticketId}` });
-            }
-          }
         } catch (error) {
-          console.error('Ошибка редактирования сообщения:', error);
+          console.error('Ошибка редактирования сообщения в SUPPORT_CHANNEL:', error);
         }
       }
-      const userMsg = await ctx.telegram.sendMessage(
-        ticket.user_id,
-        `📞 <b>Ответ на тикет #${ticketId}</b>\n\n${replyText}`,
-        { parse_mode: 'HTML' }
-      ).catch(err => console.error(`Ошибка уведомления пользователя ${ticket.user_id}:`, err));
-      deleteNotification(ctx, userMsg.message_id);
       const msg = await ctx.reply(
-        `✅ <b>Ответ на тикет #${ticketId}</b> отправлен!`,
+        `✅ <b>Ответ на тикет #${ticketId} отправлен!</b>\n\n` +
+        `Тикет закрыт. Пользователь уведомлён.`,
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([[Markup.button.callback('🔙 К тикетам', 'admin_tickets')]])
@@ -1301,20 +1410,31 @@ bot.on('message', async (ctx) => {
       ctx.session.waitingForTicketReply = false;
       return;
     }
+
+    const msg = await ctx.reply(
+      `🤔 <b>Не понял команду!</b>\n\n` +
+      `Используй главное меню или напиши /help для справки по ${process.env.BOT_NAME}. 🌟`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
+      }
+    );
+    deleteNotification(ctx, msg.message_id);
   } catch (err) {
     console.error('Ошибка в обработчике сообщений:', err);
-    const msg = await ctx.reply('❌ Произошла ошибка, попробуй снова!', { parse_mode: 'HTML' });
+    const msg = await ctx.reply(`❌ Произошла ошибка! Попробуй снова или напиши в поддержку ${process.env.BOT_NAME}. 🛠`, { parse_mode: 'HTML' });
     deleteNotification(ctx, msg.message_id);
   }
 });
 
 // Запуск бота
 bot.launch().then(() => {
-  console.log(`${process.env.BOT_NAME} запущен!`);
+  console.log(`${process.env.BOT_NAME} запущен! 🚀`);
 }).catch(err => {
   console.error('Ошибка запуска бота:', err);
+  process.exit(1);
 });
 
-// Обработка остановки бота
+// Обработка graceful shutdown
 process.once('SIGINT', () => bot.stop('SIGINT'));
 process.once('SIGTERM', () => bot.stop('SIGTERM'));
