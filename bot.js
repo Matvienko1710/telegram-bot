@@ -14,6 +14,7 @@ bot.use(session());
 // Ссылки и настройки из .env
 const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@YourMainChannel';
 const TASK_CHANNEL = process.env.TASK_CHANNEL || '@YourTaskChannel';
+const TASK_CHANNEL_KITTY = '@kittyyyyywwr'; // Новый канал для задания
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot?start=6587897295';
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(id => parseInt(id)) : [6587897295];
 const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@YourSupportChannel';
@@ -80,6 +81,7 @@ function initTasks() {
   const initialTasks = [
     { type: 'subscribe_channel', description: 'Подписаться на канал', goal: 1, reward: 10 },
     { type: 'start_bot', description: 'Запустить бота', goal: 1, reward: 5 },
+    { type: 'subscribe_channel_kittyyyyywwr', description: 'Подписаться на канал', goal: 1, reward: 10 }, // Новое задание
   ];
 
   initialTasks.forEach(task => {
@@ -200,8 +202,8 @@ bot.on('callback_query', async (ctx) => {
     return ctx.answerCbQuery('🎉 Бонус: +5 звёзд!', { show_alert: true });
   }
 
-  if (action === 'tasks') {
-    ctx.session.currentTaskIndex = ctx.session.currentTaskIndex || 0;
+  if (action === 'tasks' || action === 'next_task') {
+    ctx.session.currentTaskIndex = action === 'next_task' ? (ctx.session.currentTaskIndex || 0) + 1 : ctx.session.currentTaskIndex || 0;
     const tasks = db.all('SELECT * FROM tasks');
     if (tasks.length === 0) {
       await ctx.editMessageText('📋 Нет доступных заданий.', {
@@ -218,25 +220,20 @@ bot.on('callback_query', async (ctx) => {
       [
         task.type === 'subscribe_channel'
           ? Markup.button.url('Подписаться', `https://t.me/${TASK_CHANNEL.replace('@', '')}`)
+          : task.type === 'subscribe_channel_kittyyyyywwr'
+          ? Markup.button.url('Подписаться', `https://t.me/kittyyyyywwr`)
           : Markup.button.url('Запустить бота', TASK_BOT_LINK),
         Markup.button.callback('✅ Проверить', `check_task_${task.id}`)
       ],
       [Markup.button.callback('➡️ Следующее задание', 'next_task')],
       [Markup.button.callback('🔙 Назад', 'back')]
     ];
-    await ctx.editMessageText(
-      `📋 <b>Задание</b>\n\n${task.description} ${taskStatus}\nНаграда: ${task.reward} звёзд`,
-      { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
-    );
-    return;
-  }
-
-  if (action === 'next_task') {
-    ctx.session.currentTaskIndex = (ctx.session.currentTaskIndex || 0) + 1;
-    await ctx.deleteMessage().catch(() => {});
-    await ctx.reply('📋 Выберите задание:', Markup.inlineKeyboard([
-      [Markup.button.callback('📋 Задания', 'tasks')]
-    ]));
+    const messageText = `📋 <b>Задание</b>\n\n${task.description} ${taskStatus}\nНаграда: ${task.reward} звёзд`;
+    if (action === 'next_task') {
+      await ctx.editMessageText(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+    } else {
+      await ctx.reply(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+    }
     return;
   }
 
@@ -396,7 +393,7 @@ bot.on('callback_query', async (ctx) => {
       return;
     }
     const buttons = tickets.map(ticket => {
-      const type = ticket.task_type ? `Заявка (${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'})` : 'Тикет';
+      const type = ticket.task_type ? `Заявка (${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота'})` : 'Тикет';
       return [
         Markup.button.callback(
           `${type} #${ticket.ticket_id} (@${ticket.username || 'без ника'}, ${ticket.status === 'open' ? 'Открыт' : 'В работе'})`,
@@ -415,7 +412,7 @@ bot.on('callback_query', async (ctx) => {
     if (!ticket) return ctx.answerCbQuery('Тикет или заявка не найдены', { show_alert: true });
     const fileIds = ticket.file_id ? JSON.parse(ticket.file_id) : [];
     let fileText = fileIds.length > 0 ? `📎 Файлы: ${fileIds.length} шт.` : '📎 Файлов нет';
-    const type = ticket.task_type ? `Заявка на задание (${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'})` : 'Тикет поддержки';
+    const type = ticket.task_type ? `Заявка на задание (${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота'})` : 'Тикет поддержки';
     const ticketText =
       `${type} #${ticket.ticket_id}\n` +
       `👤 Пользователь: @${ticket.username || 'без ника'}\n` +
@@ -486,9 +483,10 @@ bot.on('callback_query', async (ctx) => {
         console.error('Ошибка редактирования сообщения:', error);
       }
     }
+    const taskName = ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота';
     await ctx.telegram.sendMessage(
       ticket.user_id,
-      `📋 Заявка #${ticketId} на задание "${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}" одобрена! Вы получили ${task.reward} звёзд.`
+      `📋 Заявка #${ticketId} на задание "${taskName}" одобрена! Вы получили ${task.reward} звёзд.`
     );
     await ctx.answerCbQuery(`✅ Заявка #${ticketId} одобрена`, { show_alert: true });
     await ctx.deleteMessage().catch(() => {});
@@ -527,9 +525,10 @@ bot.on('callback_query', async (ctx) => {
         console.error('Ошибка редактирования сообщения:', error);
       }
     }
+    const taskName = ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота';
     await ctx.telegram.sendMessage(
       ticket.user_id,
-      `📋 Заявка #${ticketId} на задание "${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}" отклонена. Попробуйте снова.`
+      `📋 Заявка #${ticketId} на задание "${taskName}" отклонена. Попробуйте снова.`
     );
     await ctx.answerCbQuery(`❌ Заявка #${ticketId} отклонена`, { show_alert: true });
     await ctx.deleteMessage().catch(() => {});
@@ -627,7 +626,7 @@ bot.on('message', async (ctx) => {
     }
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileId = photo.file_id;
-    const description = `Заявка на задание: ${task.type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}`;
+    const description = `Заявка на задание: ${task.type === 'subscribe_channel' ? 'Подписка на канал' : task.type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота'}`;
     let info;
     try {
       info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, 'Загрузка заявки...');
@@ -668,7 +667,7 @@ bot.on('message', async (ctx) => {
       ctx.session.waitingForTaskScreenshot = null;
       return;
     }
-    await ctx.telegram.sendMessage(ADMIN_IDS[0], `📋 Новая заявка #${ticketId} на задание "${task.type === 'subscribe_channel' ? 'Подписка на канал' : 'Запуск бота'}" от @${user.username || 'без ника'}`);
+    await ctx.telegram.sendMessage(ADMIN_IDS[0], `📋 Новая заявка #${ticketId} на задание "${task.type === 'subscribe_channel' ? 'Подписка на канал' : task.type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота'}" от @${user.username || 'без ника'}`);
     db.run('INSERT OR REPLACE INTO user_tasks (user_id, task_id, progress, completed) VALUES (?, ?, ?, ?)', [id, task.id, 1, 0]);
     const msg = await ctx.reply(`✅ Заявка #${ticketId} на задание отправлена на проверку. Ожидайте ответа администрации.`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
