@@ -105,7 +105,7 @@ function initDb() {
           title.condition_value,
           title.description
         );
-        console.log(`Титул "${title.name}" создан с условием "${title.condition_type}: ${title.condition_value}"`);
+        console.log(`Титул "${title.name}" создан с условием "${title.condition_type}: ${title.condition_value}" (описание: "${title.description}")`);
       }
     });
 
@@ -119,7 +119,7 @@ function initDb() {
 initDb();
 
 module.exports = {
-  get: query => db.prepare(query).get,
-  run: query => db.prepare(query).run,
-  all: query => db.prepare(query).all,
+  get: (query, params) => db.prepare(query).get(...params),
+  run: (query, params) => db.prepare(query).run(...params),
+  all: (query, params) => db.prepare(query).all(...params),
 };
