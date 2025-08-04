@@ -645,7 +645,7 @@ bot.on('callback_query', async (ctx) => {
         )
       ];
     });
-    buttons.push([Markup.button.callback('🔙 В меню', 'back')]);
+    buttons.push([Markup.button.callback('🔙 К тикетам', 'admin_tickets')]);
     const msg = await ctx.reply(
       `📞 <b>Тикеты и заявки</b>\n\n` +
       `Выбери тикет или заявку для просмотра и обработки: 🔍`,
@@ -833,7 +833,7 @@ bot.on('callback_query', async (ctx) => {
         const updatedText =
           `📞 <b>Тикет #${ticket.ticket_id}</b>\n\n` +
           `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
-          `�ID: ${ticket.user_id}\n` +
+          `🆔 ID: ${ticket.user_id}\n` +
           `📝 <b>Описание:</b> ${ticket.description}\n` +
           `📅 <b>Создан:</b> ${ticket.created_at}\n` +
           `📌 <b>Статус:</b> ${ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}`;
