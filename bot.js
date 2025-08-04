@@ -12,12 +12,12 @@ const bot = new Telegraf(process.env.BOT_TOKEN);
 bot.use(session());
 
 // Ссылки и настройки из .env
-const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@YourMainChannel';
-const TASK_CHANNEL = process.env.TASK_CHANNEL || '@YourTaskChannel';
-const TASK_CHANNEL_KITTY = '@kittyyyyywwr'; // Новый канал для задания
+const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@magnumtap';
+const TASK_CHANNEL = process.env.TASK_CHANNEL || '@musice46';
+const TASK_CHANNEL_KITTY = process.env.TASK_CHANNEL_KITTY || '@kittyyyyywwr'; // Новый канал
 const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot?start=6587897295';
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(id => parseInt(id)) : [6587897295];
-const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@YourSupportChannel';
+const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@magnumsupported';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS) || 60;
 const MESSAGE_TTL = 15_000;
 
@@ -221,7 +221,7 @@ bot.on('callback_query', async (ctx) => {
         task.type === 'subscribe_channel'
           ? Markup.button.url('Подписаться', `https://t.me/${TASK_CHANNEL.replace('@', '')}`)
           : task.type === 'subscribe_channel_kittyyyyywwr'
-          ? Markup.button.url('Подписаться', `https://t.me/kittyyyyywwr`)
+          ? Markup.button.url('Подписаться', `https://t.me/${TASK_CHANNEL_KITTY.replace('@', '')}`)
           : Markup.button.url('Запустить бота', TASK_BOT_LINK),
         Markup.button.callback('✅ Проверить', `check_task_${task.id}`)
       ],
@@ -393,7 +393,7 @@ bot.on('callback_query', async (ctx) => {
       return;
     }
     const buttons = tickets.map(ticket => {
-      const type = ticket.task_type ? `Заявка (${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота'})` : 'Тикет';
+      const type = ticket.task_type ? `Заявка (${ticket.task_type === 'subscribe_channel' ? `Подписка на канал (${TASK_CHANNEL})` : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? `Подписка на канал (${TASK_CHANNEL_KITTY})` : 'Запуск бота'})` : 'Тикет';
       return [
         Markup.button.callback(
           `${type} #${ticket.ticket_id} (@${ticket.username || 'без ника'}, ${ticket.status === 'open' ? 'Открыт' : 'В работе'})`,
@@ -412,7 +412,7 @@ bot.on('callback_query', async (ctx) => {
     if (!ticket) return ctx.answerCbQuery('Тикет или заявка не найдены', { show_alert: true });
     const fileIds = ticket.file_id ? JSON.parse(ticket.file_id) : [];
     let fileText = fileIds.length > 0 ? `📎 Файлы: ${fileIds.length} шт.` : '📎 Файлов нет';
-    const type = ticket.task_type ? `Заявка на задание (${ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота'})` : 'Тикет поддержки';
+    const type = ticket.task_type ? `Заявка на задание (${ticket.task_type === 'subscribe_channel' ? `Подписка на канал (${TASK_CHANNEL})` : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? `Подписка на канал (${TASK_CHANNEL_KITTY})` : 'Запуск бота'})` : 'Тикет поддержки';
     const ticketText =
       `${type} #${ticket.ticket_id}\n` +
       `👤 Пользователь: @${ticket.username || 'без ника'}\n` +
@@ -483,7 +483,7 @@ bot.on('callback_query', async (ctx) => {
         console.error('Ошибка редактирования сообщения:', error);
       }
     }
-    const taskName = ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота';
+    const taskName = ticket.task_type === 'subscribe_channel' ? `Подписка на канал (${TASK_CHANNEL})` : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? `Подписка на канал (${TASK_CHANNEL_KITTY})` : 'Запуск бота';
     await ctx.telegram.sendMessage(
       ticket.user_id,
       `📋 Заявка #${ticketId} на задание "${taskName}" одобрена! Вы получили ${task.reward} звёзд.`
@@ -525,7 +525,7 @@ bot.on('callback_query', async (ctx) => {
         console.error('Ошибка редактирования сообщения:', error);
       }
     }
-    const taskName = ticket.task_type === 'subscribe_channel' ? 'Подписка на канал' : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота';
+    const taskName = ticket.task_type === 'subscribe_channel' ? `Подписка на канал (${TASK_CHANNEL})` : ticket.task_type === 'subscribe_channel_kittyyyyywwr' ? `Подписка на канал (${TASK_CHANNEL_KITTY})` : 'Запуск бота';
     await ctx.telegram.sendMessage(
       ticket.user_id,
       `📋 Заявка #${ticketId} на задание "${taskName}" отклонена. Попробуйте снова.`
@@ -626,7 +626,7 @@ bot.on('message', async (ctx) => {
     }
     const photo = ctx.message.photo[ctx.message.photo.length - 1];
     const fileId = photo.file_id;
-    const description = `Заявка на задание: ${task.type === 'subscribe_channel' ? 'Подписка на канал' : task.type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота'}`;
+    const description = `Заявка на задание: ${task.type === 'subscribe_channel' ? `Подписка на канал (${TASK_CHANNEL})` : task.type === 'subscribe_channel_kittyyyyywwr' ? `Подписка на канал (${TASK_CHANNEL_KITTY})` : 'Запуск бота'}`;
     let info;
     try {
       info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, 'Загрузка заявки...');
@@ -667,7 +667,7 @@ bot.on('message', async (ctx) => {
       ctx.session.waitingForTaskScreenshot = null;
       return;
     }
-    await ctx.telegram.sendMessage(ADMIN_IDS[0], `📋 Новая заявка #${ticketId} на задание "${task.type === 'subscribe_channel' ? 'Подписка на канал' : task.type === 'subscribe_channel_kittyyyyywwr' ? 'Подписка на канал (@kittyyyyywwr)' : 'Запуск бота'}" от @${user.username || 'без ника'}`);
+    await ctx.telegram.sendMessage(ADMIN_IDS[0], `📋 Новая заявка #${ticketId} на задание "${task.type === 'subscribe_channel' ? `Подписка на канал (${TASK_CHANNEL})` : task.type === 'subscribe_channel_kittyyyyywwr' ? `Подписка на канал (${TASK_CHANNEL_KITTY})` : 'Запуск бота'}" от @${user.username || 'без ника'}`);
     db.run('INSERT OR REPLACE INTO user_tasks (user_id, task_id, progress, completed) VALUES (?, ?, ?, ?)', [id, task.id, 1, 0]);
     const msg = await ctx.reply(`✅ Заявка #${ticketId} на задание отправлена на проверку. Ожидайте ответа администрации.`, Markup.inlineKeyboard([
       [Markup.button.callback('🔙 Назад', 'back')]
