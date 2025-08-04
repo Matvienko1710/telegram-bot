@@ -275,7 +275,6 @@ bot.on('callback_query', async (ctx) => {
     const task = tasks[taskIndex];
     const userTask = db.get('SELECT * FROM user_tasks WHERE user_id = ? AND task_id = ?', [id, task.id]) || { progress: 0, completed: 0 };
     const taskStatus = userTask.completed ? '✅ <i>Выполнено</i>' : userTask.progress > 0 ? '⏳ <i>На проверке</i>' : '🔥 <i>Не начато</i>';
-    const channel = task.type === 'subscribe_channel' ? TASK_CHANNEL : task.type === 'subscribe_channel_kittyyyyywwr' ? TASK_CHANNEL_KITTY : null;
     const buttons = [
       [
         task.type === 'subscribe_channel' || task.type === 'subscribe_channel_kittyyyyywwr'
@@ -283,7 +282,6 @@ bot.on('callback_query', async (ctx) => {
           : Markup.button.url('🤖 Запустить бота', TASK_BOT_LINK),
         Markup.button.callback('✅ Отправить скриншот', `check_task_${task.id}`)
       ],
-      channel ? [Markup.button.callback('🔍 Проверить подписку', `check_subscription_${task.id}`)] : [],
       [Markup.button.callback('➡️ Следующее задание', 'next_task')],
       [Markup.button.callback('🔙 В меню', 'back')]
     ];
@@ -322,21 +320,6 @@ bot.on('callback_query', async (ctx) => {
     );
     deleteNotification(ctx, msg.message_id);
     return;
-  }
-
-  if (action.startsWith('check_subscription_')) {
-    const taskId = parseInt(action.split('_')[2]);
-    const task = db.get('SELECT * FROM tasks WHERE id = ?', [taskId]);
-    if (!task) {
-      return ctx.answerCbQuery('❌ Задание не найдено!', { show_alert: true });
-    }
-    const channel = task.type === 'subscribe_channel' ? TASK_CHANNEL : TASK_CHANNEL_KITTY;
-    const subscribed = await isUserSubscribed(ctx, channel);
-    if (subscribed) {
-      return ctx.answerCbQuery(`✅ Ты подписан на ${channel}! Отправь скриншот для подтверждения.`, { show_alert: true });
-    } else {
-      return ctx.answerCbQuery(`❌ Подпишись на ${channel}, чтобы выполнить задание!`, { show_alert: true });
-    }
   }
 
   if (['profile', 'leaders', 'stats', 'ref'].includes(action)) {
@@ -574,7 +557,7 @@ bot.on('callback_query', async (ctx) => {
     const ticketText =
       `${type} #${ticket.ticket_id}\n\n` +
       `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
-      `�ID: ${ticket.user_id}\n` +
+      `🆔 <b>ID:</b> ${ticket.user_id}\n` +
       `📝 <b>Описание:</b> ${ticket.description || 'Без описания'}\n` +
       `${fileText}\n` +
       `📅 <b>Создан:</b> ${ticket.created_at}\n` +
@@ -676,7 +659,7 @@ bot.on('callback_query', async (ctx) => {
         const updatedText =
           `📋 <b>Заявка #${ticket.ticket_id}</b>\n\n` +
           `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
-          `🆔 <b>ID:</b> ${ticket.user_id}\n` +
+          `�ID: ${ticket.user_id}\n` +
           `📝 <b>Описание:</b> ${ticket.description || 'Без описания'}\n` +
           `📅 <b>Создан:</b> ${ticket.created_at}\n` +
           `📌 <b>Статус:</b> Отклонено ❌`;
