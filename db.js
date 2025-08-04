@@ -97,7 +97,7 @@ function initDb() {
     ];
 
     initialTitles.forEach(title => {
-      const exists = db.prepare('SELECT * FROM titles WHERE name = ?').get([title.name]);
+      const exists = db.prepare('SELECT * FROM titles WHERE name = ?').get(title.name);
       if (!exists) {
         db.prepare('INSERT INTO titles (name, condition_type, condition_value, description) VALUES (?, ?, ?, ?)').run(
           title.name,
@@ -119,7 +119,7 @@ function initDb() {
 initDb();
 
 module.exports = {
-  get: db.prepare.bind(db),
-  run: db.prepare.bind(db),
-  all: db.prepare.bind(db).all.bind(db),
+  get: query => db.prepare(query).get,
+  run: query => db.prepare(query).run,
+  all: query => db.prepare(query).all,
 };
