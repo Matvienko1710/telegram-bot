@@ -15,11 +15,11 @@ bot.use(session());
 const REQUIRED_CHANNEL = process.env.REQUIRED_CHANNEL || '@magnumtap';
 const TASK_CHANNEL = process.env.TASK_CHANNEL || '@musice46';
 const TASK_CHANNEL_KITTY = process.env.TASK_CHANNEL_KITTY || '@kittyyyyywwr';
-const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot?start=6587897295';
+const TASK_BOT_LINK = process.env.TASK_BOT_LINK || 'https://t.me/firestars_rbot';
 const ADMIN_IDS = process.env.ADMIN_IDS ? process.env.ADMIN_IDS.split(',').map(id => parseInt(id)) : [6587897295];
 const SUPPORT_CHANNEL = process.env.SUPPORT_CHANNEL || '@magnumsupported';
 const FARM_COOLDOWN_SECONDS = parseInt(process.env.FARM_COOLDOWN_SECONDS) || 60;
-const MESSAGE_TTL = 15_000;
+const MESSAGE_TTL = 15000;
 
 // Функция для проверки и обновления титула
 function updateUserTitle(ctx, userId) {
@@ -72,7 +72,7 @@ function updateUserTitle(ctx, userId) {
       userId,
       `🎉 Поздравляем! Ты получил титул <b>${newTitle.name}</b>! 🌟\n\n<i>${newTitle.description}</i>`,
       { parse_mode: 'HTML' }
-    );
+    ).catch(err => console.error(`Ошибка отправки сообщения о титуле для ${userId}:`, err));
     console.log(`Пользователь ${userId} получил титул "${newTitle.name}" (описание: "${newTitle.description}")`);
   }
 }
@@ -123,18 +123,18 @@ async function sendMainMenu(ctx, edit = false) {
   const id = ctx.from.id;
   const user = db.get('SELECT * FROM users WHERE id = ?', [id]);
   if (!user) {
-    const msg = await ctx.reply('❌ Пользователь не найден! Напиши /start, чтобы зарегистрироваться.');
+    const msg = await ctx.reply(`❌ Пользователь не найден! Напиши /start, чтобы зарегистрироваться в ${process.env.BOT_NAME}.`);
     deleteNotification(ctx, msg.message_id);
     return;
   }
   const stars = user.stars || 0;
   const invited = db.get('SELECT COUNT(*) as count FROM users WHERE referred_by = ?', [id]).count || 0;
   const messageText =
-    `👋 <b>Добро пожаловать в Magnum Stars!</b> 🌟\n\n` +
+    `👋 <b>Добро пожаловать в ${process.env.BOT_NAME}!</b> 🌟\n\n` +
     `Ты в игре, где можно <i>зарабатывать звёзды</i> ✨, выполняя простые задания, приглашая друзей и собирая бонусы! 🚀\n\n` +
     `💫 <b>Твой баланс:</b> ${stars} звёзд\n` +
     `👥 <b>Приглашено друзей:</b> ${invited}\n\n` +
-    `Выбери действие и стань звездой Magnum Stars! 🌟\n` +
+    `Выбери действие и стань звездой ${process.env.BOT_NAME}! 🌟\n` +
     `<i>Подсказка: используй /help для справки по боту!</i>`;
 
   const keyboard = Markup.inlineKeyboard([
@@ -159,7 +159,8 @@ async function sendMainMenu(ctx, edit = false) {
     if (edit) {
       await ctx.editMessageText(messageText, { parse_mode: 'HTML', ...keyboard });
     } else {
-      await ctx.reply(messageText, { parse_mode: 'HTML', ...keyboard });
+      const msg = await ctx.reply(messageText, { parse_mode: 'HTML', ...keyboard });
+      deleteNotification(ctx, msg.message_id);
     }
   } catch (err) {
     console.error('Ошибка отправки главного меню:', err);
@@ -174,7 +175,7 @@ bot.use(async (ctx, next) => {
   const id = ctx.from.id;
   const user = db.get('SELECT * FROM users WHERE id = ?', [id]);
   if (!user && ctx.updateType === 'message' && ctx.message?.text !== '/start') {
-    const msg = await ctx.reply('❌ Начни с команды /start, чтобы войти в Magnum Stars! 🚀');
+    const msg = await ctx.reply(`❌ Начни с команды /start, чтобы войти в ${process.env.BOT_NAME}! 🚀`);
     deleteNotification(ctx, msg.message_id);
     return;
   }
@@ -189,11 +190,12 @@ bot.start(async (ctx) => {
   ctx.session.waitingForSupport = false;
   ctx.session.waitingForCode = false;
   ctx.session.waitingForPromo = false;
+  ctx.session.waitingForTask = false;
   ctx.session.waitingForTicketReply = false;
   ctx.session.broadcast = false;
 
   const id = ctx.from.id;
-  const username = ctx.from.username || '';
+  const username = ctx.from.username || ctx.from.first_name || 'без ника';
   const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
 
   // Проверка подписки на обязательный канал
@@ -201,7 +203,7 @@ bot.start(async (ctx) => {
   if (!subscribed) {
     const msg = await ctx.reply(
       `🔒 <b>Для начала подпишись на наш канал!</b>\n\n` +
-      `📢 Это твой первый шаг к звёздам Magnum Stars! Подпишись на ${REQUIRED_CHANNEL} и возвращайся! 🌟`,
+      `📢 Это твой первый шаг к звёздам ${process.env.BOT_NAME}! Подпишись на ${REQUIRED_CHANNEL} и возвращайся! 🌟`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([
@@ -210,6 +212,7 @@ bot.start(async (ctx) => {
         ])
       }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
@@ -223,10 +226,10 @@ bot.start(async (ctx) => {
         db.run('UPDATE users SET stars = stars + 10 WHERE id = ?', [referral]);
         ctx.telegram.sendMessage(
           referral,
-          `🎉 Твой друг @${username || 'без ника'} присоединился к Magnum Stars! +10 звёзд! 🌟`,
+          `🎉 Твой друг @${username} присоединился к ${process.env.BOT_NAME}! +10 звёзд! 🌟`,
           { parse_mode: 'HTML' }
-        );
-        updateUserTitle(ctx, referral); // Проверка титула для реферера
+        ).catch(err => console.error(`Ошибка уведомления реферера ${referral}:`, err));
+        updateUserTitle(ctx, referral);
       }
     }
   }
@@ -239,12 +242,12 @@ bot.command('help', async (ctx) => {
   const id = ctx.from.id;
   const user = db.get('SELECT * FROM users WHERE id = ?', [id]);
   if (!user) {
-    const msg = await ctx.reply('❌ Начни с команды /start, чтобы войти в Magnum Stars! 🚀');
+    const msg = await ctx.reply(`❌ Начни с команды /start, чтобы войти в ${process.env.BOT_NAME}! 🚀`);
     deleteNotification(ctx, msg.message_id);
     return;
   }
   const helpText =
-    `🌟 <b>Справка по Magnum Stars</b> ✨\n\n` +
+    `🌟 <b>Справка по ${process.env.BOT_NAME}</b> ✨\n\n` +
     `Добро пожаловать в бот, где ты зарабатываешь звёзды ✨ и соревнуешься с друзьями! Вот что ты можешь делать:\n\n` +
     `⭐ <b>Фарм звёзд</b>: Нажимай "Фарм" каждые ${FARM_COOLDOWN_SECONDS} секунд и получай +1 звезду!\n` +
     `🎁 <b>Ежедневный бонус</b>: Раз в 24 часа получай +5 звёзд бесплатно!\n` +
@@ -272,18 +275,18 @@ bot.on('callback_query', async (ctx) => {
   let user = db.get('SELECT * FROM users WHERE id = ?', [id]);
 
   if (!user && action !== 'check_sub') {
-    await ctx.answerCbQuery('❌ Пользователь не найден! Напиши /start.', { show_alert: true });
+    await ctx.answerCbQuery(`❌ Пользователь не найден! Напиши /start в ${process.env.BOT_NAME}.`, { show_alert: true });
     return;
   }
 
   if (action === 'check_sub') {
     const subscribed = await isUserSubscribed(ctx);
     if (!subscribed) {
-      return ctx.answerCbQuery(`❌ Подпишись на ${REQUIRED_CHANNEL} для доступа к Magnum Stars!`, { show_alert: true });
+      return ctx.answerCbQuery(`❌ Подпишись на ${REQUIRED_CHANNEL} для доступа к ${process.env.BOT_NAME}!`, { show_alert: true });
     }
     const existing = db.get('SELECT * FROM users WHERE id = ?', [id]);
     if (!existing) {
-      const username = ctx.from.username || '';
+      const username = ctx.from.username || ctx.from.first_name || 'без ника';
       const referral = ctx.startPayload ? parseInt(ctx.startPayload) : null;
       db.run('INSERT INTO users (id, username, referred_by, stars, daily_streak) VALUES (?, ?, ?, ?, ?)', [id, username, referral, 0, 0]);
       if (referral && referral !== id) {
@@ -292,15 +295,15 @@ bot.on('callback_query', async (ctx) => {
           db.run('UPDATE users SET stars = stars + 10 WHERE id = ?', [referral]);
           ctx.telegram.sendMessage(
             referral,
-            `🎉 Твой друг @${username || 'без ника'} присоединился к Magnum Stars! +10 звёзд! 🌟`,
+            `🎉 Твой друг @${username} присоединился к ${process.env.BOT_NAME}! +10 звёзд! 🌟`,
             { parse_mode: 'HTML' }
-          );
+          ).catch(err => console.error(`Ошибка уведомления реферера ${referral}:`, err));
           updateUserTitle(ctx, referral);
         }
       }
     }
     await sendMainMenu(ctx);
-    return;
+    return ctx.answerCbQuery('✅ Подписка подтверждена! Добро пожаловать!', { show_alert: true });
   }
 
   if (action === 'farm') {
@@ -311,7 +314,7 @@ bot.on('callback_query', async (ctx) => {
     }
     db.run('UPDATE users SET stars = stars + 1, last_farm = ? WHERE id = ?', [now, id]);
     user = db.get('SELECT * FROM users WHERE id = ?', [id]);
-    updateUserTitle(ctx, id); // Проверка титула
+    updateUserTitle(ctx, id);
     await sendMainMenu(ctx, true);
     return ctx.answerCbQuery(`⭐ +1 звезда! Твой баланс: ${user.stars} звёзд.`, { show_alert: true });
   }
@@ -327,7 +330,7 @@ bot.on('callback_query', async (ctx) => {
     const dailyStreak = last && nowDay.diff(last, 'day') === 1 ? user.daily_streak + 1 : 1;
     db.run('UPDATE users SET stars = stars + 5, last_bonus = ?, daily_streak = ? WHERE id = ?', [nowDay.toISOString(), dailyStreak, id]);
     user = db.get('SELECT * FROM users WHERE id = ?', [id]);
-    updateUserTitle(ctx, id); // Проверка титула
+    updateUserTitle(ctx, id);
     await sendMainMenu(ctx, true);
     return ctx.answerCbQuery(`🎉 +5 звёзд! Твой баланс: ${user.stars} звёзд.`, { show_alert: true });
   }
@@ -335,9 +338,10 @@ bot.on('callback_query', async (ctx) => {
   if (action === 'tasks' || action === 'next_task') {
     ctx.session.currentTaskIndex = action === 'next_task' ? (ctx.session.currentTaskIndex || 0) + 1 : ctx.session.currentTaskIndex || 0;
     const tasks = db.all('SELECT * FROM tasks', []);
+    console.log('Задания:', tasks); // Для отладки
     if (tasks.length === 0) {
       await ctx.editMessageText(
-        '📋 <b>Заданий пока нет!</b>\n\n<i>Новые задания скоро появятся, следи за обновлениями в Magnum Stars!</i>',
+        `📋 <b>Заданий пока нет!</b>\n\n<i>Новые задания скоро появятся, следи за обновлениями в ${process.env.BOT_NAME}!</i>`,
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
@@ -369,10 +373,13 @@ bot.on('callback_query', async (ctx) => {
       if (action === 'next_task') {
         await ctx.editMessageText(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
       } else {
-        await ctx.reply(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+        const msg = await ctx.reply(messageText, { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) });
+        deleteNotification(ctx, msg.message_id);
       }
     } catch (err) {
       console.error('Ошибка отображения задания:', err);
+      const msg = await ctx.reply('❌ Ошибка при загрузке задания. Попробуй снова!');
+      deleteNotification(ctx, msg.message_id);
     }
     return;
   }
@@ -385,7 +392,7 @@ bot.on('callback_query', async (ctx) => {
     }
     const userTask = db.get('SELECT * FROM user_tasks WHERE user_id = ? AND task_id = ?', [id, task.id]) || { progress: 0, completed: 0 };
     if (userTask.completed) {
-      return ctx.answerCbQuery('✅ Задание уже выполнено! Перейди к следующему в Magnum Stars! 🌟', { show_alert: true });
+      return ctx.answerCbQuery(`✅ Задание уже выполнено! Перейди к следующему в ${process.env.BOT_NAME}! 🌟`, { show_alert: true });
     }
     if (userTask.progress > 0) {
       return ctx.answerCbQuery('⏳ Заявка уже на проверке. Ожидай решения админов! 🕒', { show_alert: true });
@@ -400,18 +407,17 @@ bot.on('callback_query', async (ctx) => {
     return;
   }
 
-  if (['profile', 'leaders', 'stats', 'ref'].includes(action)) {
-    await ctx.deleteMessage().catch(() => {});
+  if (['profile', 'leaders', 'stats', 'ref', 'support', 'admin'].includes(action)) {
+    await ctx.deleteMessage().catch(err => console.error('Ошибка удаления сообщения:', err));
   }
 
   if (action === 'profile') {
-    const invited = db.get('SELECT COUNT(*) as count FROM users WHERE referred_by = ?', [id]).count;
+    const invited = db.get('SELECT COUNT(*) as count FROM users WHERE referred_by = ?', [id]).count || 0;
     const referredByUser = user.referred_by ? db.get('SELECT username FROM users WHERE id = ?', [user.referred_by]) : null;
     const referrerName = referredByUser ? `@${referredByUser.username || 'без ника'}` : '—';
     const displayName = ctx.from.first_name || 'Аноним';
     const title = user.title_id ? db.get('SELECT name, description FROM titles WHERE id = ?', [user.title_id]) : null;
     const titleText = title ? `${title.name} (${title.description})` : 'Нет титула';
-    const tasks = db.all('SELECT * FROM tasks', []);
     const completedTasks = db.all('SELECT t.description FROM user_tasks ut JOIN tasks t ON ut.task_id = t.id WHERE ut.user_id = ? AND ut.completed = 1', [id]);
     const nowDay = dayjs();
     const lastBonus = user.last_bonus ? dayjs(user.last_bonus) : null;
@@ -419,7 +425,7 @@ bot.on('callback_query', async (ctx) => {
       ? `⏳ Доступно через ${24 - nowDay.diff(lastBonus, 'hour')} ч. ${Math.ceil((24 * 60 - nowDay.diff(lastBonus, 'minute')) % 60)} мин.`
       : '✅ Доступно!';
     const profileText =
-      `🌟 <b>Твой профиль в Magnum Stars</b> ✨\n\n` +
+      `🌟 <b>Твой профиль в ${process.env.BOT_NAME}</b> ✨\n\n` +
       `👤 <b>Имя:</b> ${displayName}\n` +
       `🏅 <b>Титул:</b> ${titleText}\n` +
       `🆔 <b>ID:</b> ${user.id}\n` +
@@ -428,33 +434,35 @@ bot.on('callback_query', async (ctx) => {
       `📣 <b>Твой реферал:</b> ${referrerName}\n` +
       `🎁 <b>Ежедневный бонус:</b> ${bonusStatus}\n` +
       `📋 <b>Выполненные задания:</b> ${completedTasks.length > 0 ? completedTasks.map(t => t.description).join(', ') : 'Нет'}\n\n` +
-      `<i>Зарабатывай больше звёзд и стань легендой Magnum Stars!</i>`;
-    await ctx.reply(profileText, {
+      `<i>Зарабатывай больше звёзд и стань легендой ${process.env.BOT_NAME}!</i>`;
+    const msg = await ctx.reply(profileText, {
       parse_mode: 'HTML',
       ...Markup.inlineKeyboard([
         [Markup.button.callback('📞 Поддержка', 'support')],
         [Markup.button.callback('🔙 В меню', 'back')]
       ])
     });
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action === 'support') {
     ctx.session.waitingForSupport = true;
-    await ctx.reply(
-      '📞 <b>Связаться с поддержкой Magnum Stars</b>\n\n' +
+    const msg = await ctx.reply(
+      `📞 <b>Связаться с поддержкой ${process.env.BOT_NAME}</b>\n\n` +
       'Опиши свою проблему или вопрос, можно прикрепить фото или документ. Мы ответим максимально быстро! 🚀',
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🚫 Отменить', 'cancel_support')]])
       }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action === 'cancel_support') {
     ctx.session.waitingForSupport = false;
-    await ctx.deleteMessage().catch(() => {});
+    await ctx.deleteMessage().catch(err => console.error('Ошибка удаления сообщения:', err));
     await sendMainMenu(ctx);
     return;
   }
@@ -464,22 +472,23 @@ bot.on('callback_query', async (ctx) => {
     const list = top.length > 0
       ? top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} ${u.title_name ? `(${u.title_name})` : ''} — ${u.stars} ⭐ — друзей: ${u.referrals}`).join('\n')
       : '😔 Пока нет лидеров. Будь первым! 🚀';
-    await ctx.reply(
-      `🏆 <b>Топ-10 игроков Magnum Stars</b> 🌟\n\n${list}\n\n<i>Приглашай друзей и выполняй задания, чтобы попасть в топ!</i>`,
+    const msg = await ctx.reply(
+      `🏆 <b>Топ-10 игроков ${process.env.BOT_NAME}</b> 🌟\n\n${list}\n\n<i>Приглашай друзей и выполняй задания, чтобы попасть в топ!</i>`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
       }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action === 'stats') {
-    const total = db.get('SELECT COUNT(*) as count FROM users').count;
+    const total = db.get('SELECT COUNT(*) as count FROM users').count || 0;
     const totalStars = db.get('SELECT SUM(stars) as stars FROM users').stars || 0;
-    const completedTasks = db.get('SELECT COUNT(*) as count FROM user_tasks WHERE completed = 1').count;
-    await ctx.reply(
-      `📊 <b>Статистика Magnum Stars</b> ✨\n\n` +
+    const completedTasks = db.get('SELECT COUNT(*) as count FROM user_tasks WHERE completed = 1').count || 0;
+    const msg = await ctx.reply(
+      `📊 <b>Статистика ${process.env.BOT_NAME}</b> ✨\n\n` +
       `👥 <b>Игроков:</b> ${total}\n` +
       `⭐ <b>Всего звёзд:</b> ${totalStars}\n` +
       `📋 <b>Выполнено заданий:</b> ${completedTasks}\n\n` +
@@ -489,13 +498,14 @@ bot.on('callback_query', async (ctx) => {
         ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
       }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action === 'ref') {
     const link = `https://t.me/${ctx.me}?start=${ctx.from.id}`;
-    await ctx.reply(
-      `📩 <b>Приглашай друзей в Magnum Stars!</b> 👥\n\n` +
+    const msg = await ctx.reply(
+      `📩 <b>Приглашай друзей в ${process.env.BOT_NAME}!</b> 👥\n\n` +
       `Твоя реферальная ссылка:\n<a href="${link}">${link}</a>\n\n` +
       `За каждого друга, который присоединится по ссылке, ты получишь <b>+10 звёзд</b>! 🌟\n` +
       `<i>Делись ссылкой и становись лидером!</i>`,
@@ -504,14 +514,15 @@ bot.on('callback_query', async (ctx) => {
         ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
       }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action === 'enter_code') {
     ctx.session.waitingForCode = true;
     const msg = await ctx.reply(
-      '💡 <b>Введи промокод</b>\n\n' +
-      'Отправь секретный код, чтобы получить бонусные звёзды в Magnum Stars! ✨',
+      `💡 <b>Введи промокод</b>\n\n` +
+      `Отправь секретный код, чтобы получить бонусные звёзды в ${process.env.BOT_NAME}! ✨`,
       { parse_mode: 'HTML' }
     );
     deleteNotification(ctx, msg.message_id);
@@ -519,9 +530,9 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin') {
-    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery('⛔ Доступ только для админов Magnum Stars!', { show_alert: true });
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery(`⛔ Доступ только для админов ${process.env.BOT_NAME}!`, { show_alert: true });
     await ctx.editMessageText(
-      `⚙️ <b>Админ-панель Magnum Stars</b> 🔒\n\n` +
+      `⚙️ <b>Админ-панель ${process.env.BOT_NAME}</b> 🔒\n\n` +
       `Управляй ботом и следи за звёздами! 🌟`,
       {
         parse_mode: 'HTML',
@@ -530,6 +541,7 @@ bot.on('callback_query', async (ctx) => {
           [Markup.button.callback('🏆 Топ игроков', 'admin_top')],
           [Markup.button.callback('📢 Рассылка', 'admin_broadcast')],
           [Markup.button.callback('➕ Добавить промокод', 'admin_addcode')],
+          [Markup.button.callback('➕ Добавить задание', 'admin_addtask')],
           [Markup.button.callback('📞 Тикеты и заявки', 'admin_tickets')],
           [Markup.button.callback('🔙 В меню', 'back')]
         ])
@@ -539,15 +551,15 @@ bot.on('callback_query', async (ctx) => {
   }
 
   if (action === 'admin_stats') {
-    const total = db.get('SELECT COUNT(*) as count FROM users').count;
+    const total = db.get('SELECT COUNT(*) as count FROM users').count || 0;
     const totalStars = db.get('SELECT SUM(stars) as stars FROM users').stars || 0;
-    const openTickets = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['open']).count;
-    const inProgressTickets = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['in_progress']).count;
-    const closedTickets = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['closed']).count;
-    const approvedTasks = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['approved']).count;
-    const rejectedTasks = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['rejected']).count;
+    const openTickets = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['open']).count || 0;
+    const inProgressTickets = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['in_progress']).count || 0;
+    const closedTickets = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['closed']).count || 0;
+    const approvedTasks = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['approved']).count || 0;
+    const rejectedTasks = db.get('SELECT COUNT(*) as count FROM tickets WHERE status = ?', ['rejected']).count || 0;
     return ctx.answerCbQuery(
-      `📊 <b>Статистика Magnum Stars</b>\n\n` +
+      `📊 <b>Статистика ${process.env.BOT_NAME}</b>\n\n` +
       `👥 Игроков: ${total}\n` +
       `⭐ Всего звёзд: ${totalStars}\n` +
       `📞 Тикеты: Открыто: ${openTickets} | В работе: ${inProgressTickets} | Закрыто: ${closedTickets}\n` +
@@ -561,32 +573,47 @@ bot.on('callback_query', async (ctx) => {
     const list = top.length > 0
       ? top.map((u, i) => `${i + 1}. @${u.username || 'без ника'} ${u.title_name ? `(${u.title_name})` : ''} — ${u.stars} ⭐`).join('\n')
       : '😔 Пока нет лидеров.';
-    await ctx.reply(
-      `🏆 <b>Топ-10 игроков Magnum Stars</b> 🌟\n\n${list}\n\n<i>Это лучшие звёздные охотники!</i>`,
+    const msg = await ctx.reply(
+      `🏆 <b>Топ-10 игроков ${process.env.BOT_NAME}</b> 🌟\n\n${list}\n\n<i>Это лучшие звёздные охотники!</i>`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
       }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action === 'admin_broadcast') {
     ctx.session.broadcast = true;
-    await ctx.reply(
-      '📢 <b>Рассылка</b>\n\n' +
-      'Введи текст, который получат все пользователи Magnum Stars. Будь осторожен, сообщение уйдёт всем! 🚨',
+    const msg = await ctx.reply(
+      `📢 <b>Рассылка</b>\n\n` +
+      `Введи текст, который получат все пользователи ${process.env.BOT_NAME}. Будь осторожен, сообщение уйдёт всем! 🚨`,
       { parse_mode: 'HTML' }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action === 'admin_addcode') {
     ctx.session.waitingForPromo = true;
     const msg = await ctx.reply(
-      '➕ <b>Добавить промокод</b>\n\n' +
-      'Введи данные в формате: <code>КОД ЗВЁЗДЫ АКТИВАЦИИ</code>\n' +
-      'Пример: <code>STAR2023 10 5</code>',
+      `➕ <b>Добавить промокод</b>\n\n` +
+      `Введи данные в формате: <code>КОД ЗВЁЗДЫ АКТИВАЦИИ</code>\n` +
+      `Пример: <code>STAR2025 10 5</code>`,
+      { parse_mode: 'HTML' }
+    );
+    deleteNotification(ctx, msg.message_id);
+    return;
+  }
+
+  if (action === 'admin_addtask') {
+    if (!ADMIN_IDS.includes(id)) return ctx.answerCbQuery(`⛔ Доступ только для админов ${process.env.BOT_NAME}!`, { show_alert: true });
+    ctx.session.waitingForTask = true;
+    const msg = await ctx.reply(
+      `➕ <b>Добавить задание</b>\n\n` +
+      `Введи данные в формате: <code>ТИП ОПИСАНИЕ ЦЕЛЬ НАГРАДА</code>\n` +
+      `Пример: <code>subscribe_channel Подпишись на ${TASK_CHANNEL} 1 5</code>`,
       { parse_mode: 'HTML' }
     );
     deleteNotification(ctx, msg.message_id);
@@ -596,14 +623,15 @@ bot.on('callback_query', async (ctx) => {
   if (action === 'admin_tickets') {
     const tickets = db.all('SELECT * FROM tickets WHERE status IN (?, ?) ORDER BY created_at DESC LIMIT 10', ['open', 'in_progress']);
     if (tickets.length === 0) {
-      await ctx.reply(
-        '📞 <b>Тикеты и заявки</b>\n\n' +
-        '😔 Нет открытых тикетов или заявок.\n\n<i>Проверь позже или напиши /help для справки.</i>',
+      const msg = await ctx.reply(
+        `📞 <b>Тикеты и заявки</b>\n\n` +
+        `😔 Нет открытых тикетов или заявок.\n\n<i>Проверь позже или напиши /help для справки.</i>`,
         {
           parse_mode: 'HTML',
           ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
         }
       );
+      deleteNotification(ctx, msg.message_id);
       return;
     }
     const buttons = tickets.map(ticket => {
@@ -618,11 +646,12 @@ bot.on('callback_query', async (ctx) => {
       ];
     });
     buttons.push([Markup.button.callback('🔙 В меню', 'back')]);
-    await ctx.reply(
-      '📞 <b>Тикеты и заявки</b>\n\n' +
-      'Выбери тикет или заявку для просмотра и обработки: 🔍',
+    const msg = await ctx.reply(
+      `📞 <b>Тикеты и заявки</b>\n\n` +
+      `Выбери тикет или заявку для просмотра и обработки: 🔍`,
       { parse_mode: 'HTML', ...Markup.inlineKeyboard(buttons) }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
@@ -681,7 +710,7 @@ bot.on('callback_query', async (ctx) => {
     db.run('UPDATE tickets SET status = ? WHERE ticket_id = ?', ['approved', ticketId]);
     db.run('INSERT OR REPLACE INTO user_tasks (user_id, task_id, progress, completed) VALUES (?, ?, ?, ?)', [ticket.user_id, task.id, 1, 1]);
     db.run('UPDATE users SET stars = stars + ? WHERE id = ?', [task.reward, ticket.user_id]);
-    updateUserTitle(ctx, ticket.user_id); // Проверка титула
+    updateUserTitle(ctx, ticket.user_id);
     if (ticket.channel_message_id) {
       try {
         const updatedText =
@@ -709,17 +738,18 @@ bot.on('callback_query', async (ctx) => {
       `📋 <b>Заявка #${ticketId}</b> на задание "${taskName}" <b>одобрена</b>! 🎉\n\n` +
       `Ты получил <b>${task.reward} звёзд</b>! Твой баланс: ${db.get('SELECT stars FROM users WHERE id = ?', [ticket.user_id]).stars} ⭐`,
       { parse_mode: 'HTML' }
-    );
+    ).catch(err => console.error(`Ошибка уведомления пользователя ${ticket.user_id}:`, err));
     await ctx.answerCbQuery(`✅ Заявка #${ticketId} одобрена!`, { show_alert: true });
-    await ctx.deleteMessage().catch(() => {});
-    await ctx.reply(
-      '📞 <b>Тикеты и заявки</b>\n\n' +
-      'Выбери тикет или заявку для обработки: 🔍',
+    await ctx.deleteMessage().catch(err => console.error('Ошибка удаления сообщения:', err));
+    const msg = await ctx.reply(
+      `📞 <b>Тикеты и заявки</b>\n\n` +
+      `Выбери тикет или заявку для обработки: 🔍`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🔙 К тикетам', 'admin_tickets')]])
       }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
@@ -758,28 +788,30 @@ bot.on('callback_query', async (ctx) => {
       `📋 <b>Заявка #${ticketId}</b> на задание "${taskName}" <b>отклонена</b> ❌\n\n` +
       `Попробуй снова! Сделай скриншот и убедись, что выполнил задание правильно. 🛠`,
       { parse_mode: 'HTML' }
-    );
+    ).catch(err => console.error(`Ошибка уведомления пользователя ${ticket.user_id}:`, err));
     await ctx.answerCbQuery(`❌ Заявка #${ticketId} отклонена!`, { show_alert: true });
-    await ctx.deleteMessage().catch(() => {});
-    await ctx.reply(
-      '📞 <b>Тикеты и заявки</b>\n\n' +
-      'Выбери тикет или заявку для обработки: 🔍',
+    await ctx.deleteMessage().catch(err => console.error('Ошибка удаления сообщения:', err));
+    const msg = await ctx.reply(
+      `📞 <b>Тикеты и заявки</b>\n\n` +
+      `Выбери тикет или заявку для обработки: 🔍`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🔙 К тикетам', 'admin_tickets')]])
       }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action.startsWith('reply_ticket_')) {
     const ticketId = parseInt(action.split('_')[2]);
     ctx.session.waitingForTicketReply = ticketId;
-    await ctx.reply(
+    const msg = await ctx.reply(
       `✍️ <b>Ответ на тикет #${ticketId}</b>\n\n` +
       `Введи текст ответа для пользователя:`,
       { parse_mode: 'HTML' }
     );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
@@ -801,7 +833,7 @@ bot.on('callback_query', async (ctx) => {
         const updatedText =
           `📞 <b>Тикет #${ticket.ticket_id}</b>\n\n` +
           `👤 <b>Пользователь:</b> @${ticket.username || 'без ника'}\n` +
-          `🆔 ID: ${ticket.user_id}\n` +
+          `�ID: ${ticket.user_id}\n` +
           `📝 <b>Описание:</b> ${ticket.description}\n` +
           `📅 <b>Создан:</b> ${ticket.created_at}\n` +
           `📌 <b>Статус:</b> ${ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}`;
@@ -821,14 +853,24 @@ bot.on('callback_query', async (ctx) => {
       `📞 <b>Тикет #${ticketId}</b>\n\n` +
       `Статус обновлён: <b>${ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}</b>`,
       { parse_mode: 'HTML' }
-    );
+    ).catch(err => console.error(`Ошибка уведомления пользователя ${ticket.user_id}:`, err));
     deleteNotification(ctx, userMsg.message_id);
     await ctx.answerCbQuery(`✅ Статус тикета #${ticketId} изменён на "${ticket.status === 'in_progress' ? 'В работе' : 'Закрыт'}"`, { show_alert: true });
+    await ctx.deleteMessage().catch(err => console.error('Ошибка удаления сообщения:', err));
+    const msg = await ctx.reply(
+      `📞 <b>Тикеты и заявки</b>\n\n` +
+      `Выбери тикет или заявку для обработки: 🔍`,
+      {
+        parse_mode: 'HTML',
+        ...Markup.inlineKeyboard([[Markup.button.callback('🔙 К тикетам', 'admin_tickets')]])
+      }
+    );
+    deleteNotification(ctx, msg.message_id);
     return;
   }
 
   if (action === 'back') {
-    await ctx.deleteMessage().catch(() => {});
+    await ctx.deleteMessage().catch(err => console.error('Ошибка удаления сообщения:', err));
     await sendMainMenu(ctx);
     return;
   }
@@ -845,8 +887,10 @@ bot.on('message', async (ctx) => {
     ctx.session.broadcast = false;
     ctx.session.waitingForPromo = false;
     ctx.session.waitingForSupport = false;
+    ctx.session.waitingForTask = false;
     ctx.session.waitingForTaskScreenshot = null;
-    const msg = await ctx.reply('❌ Начни с команды /start, чтобы войти в Magnum Stars! 🚀');
+    ctx.session.waitingForTicketReply = false;
+    const msg = await ctx.reply(`❌ Начни с команды /start, чтобы войти в ${process.env.BOT_NAME}! 🚀`);
     deleteNotification(ctx, msg.message_id);
     return;
   }
@@ -877,7 +921,7 @@ bot.on('message', async (ctx) => {
       info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, '📋 Загрузка заявки...');
     } catch (error) {
       console.error('Ошибка отправки сообщения в SUPPORT_CHANNEL:', error);
-      const msg = await ctx.reply('❌ Ошибка при создании заявки. Попробуй позже! 🛠', { parse_mode: 'HTML' });
+      const msg = await ctx.reply(`❌ Ошибка при создании заявки. Попробуй позже! 🛠`, { parse_mode: 'HTML' });
       deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForTaskScreenshot = null;
       return;
@@ -907,7 +951,7 @@ bot.on('message', async (ctx) => {
     } catch (error) {
       console.error('Ошибка отправки фото в SUPPORT_CHANNEL:', error);
       db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]);
-      const msg = await ctx.reply('❌ Ошибка при создании заявки. Попробуй позже! 🛠', { parse_mode: 'HTML' });
+      const msg = await ctx.reply(`❌ Ошибка при создании заявки. Попробуй позже! 🛠`, { parse_mode: 'HTML' });
       deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForTaskScreenshot = null;
       return;
@@ -919,7 +963,7 @@ bot.on('message', async (ctx) => {
         `Задание: "${task.type === 'subscribe_channel' ? `Подписка на ${TASK_CHANNEL}` : task.type === 'subscribe_channel_kittyyyyywwr' ? `Подписка на ${TASK_CHANNEL_KITTY}` : 'Запуск бота'}"\n` +
         `От: @${user.username || 'без ника'}`,
         { parse_mode: 'HTML' }
-      );
+      ).catch(err => console.error(`Ошибка уведомления админа ${adminId}:`, err));
     }
     const msg = await ctx.reply(
       `✅ <b>Заявка #${ticketId}</b> отправлена на проверку! ⏳\n\n` +
@@ -949,7 +993,7 @@ bot.on('message', async (ctx) => {
       info = await ctx.telegram.sendMessage(SUPPORT_CHANNEL, '📞 Загрузка тикета...');
     } catch (error) {
       console.error('Ошибка отправки сообщения в SUPPORT_CHANNEL:', error);
-      const msg = await ctx.reply('❌ Ошибка при создании тикета. Попробуй позже! 🛠', { parse_mode: 'HTML' });
+      const msg = await ctx.reply(`❌ Ошибка при создании тикета. Попробуй позже! 🛠`, { parse_mode: 'HTML' });
       deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForSupport = false;
       return;
@@ -983,7 +1027,7 @@ bot.on('message', async (ctx) => {
     } catch (error) {
       console.error('Ошибка отправки в SUPPORT_CHANNEL:', error);
       db.run('DELETE FROM tickets WHERE ticket_id = ?', [ticketId]);
-      const msg = await ctx.reply('❌ Ошибка при создании тикета. Попробуй позже! 🛠', { parse_mode: 'HTML' });
+      const msg = await ctx.reply(`❌ Ошибка при создании тикета. Попробуй позже! 🛠`, { parse_mode: 'HTML' });
       deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForSupport = false;
       return;
@@ -994,11 +1038,11 @@ bot.on('message', async (ctx) => {
         `📞 <b>Новый тикет #${ticketId}</b>\n\n` +
         `От: @${user.username || 'без ника'}`,
         { parse_mode: 'HTML' }
-      );
+      ).catch(err => console.error(`Ошибка уведомления админа ${adminId}:`, err));
     }
     const msg = await ctx.reply(
       `✅ <b>Тикет #${ticketId}</b> создан! 🚀\n\n` +
-      `Мы ответим тебе в ближайшее время. Спасибо за обращение в Magnum Stars! 😊`,
+      `Мы ответим тебе в ближайшее время. Спасибо за обращение в ${process.env.BOT_NAME}! 😊`,
       {
         parse_mode: 'HTML',
         ...Markup.inlineKeyboard([[Markup.button.callback('🔙 В меню', 'back')]])
@@ -1016,11 +1060,13 @@ bot.on('message', async (ctx) => {
       try {
         await bot.telegram.sendMessage(u.id, ctx.message.text, { parse_mode: 'HTML' });
         successCount++;
-      } catch {}
+      } catch (err) {
+        console.error(`Ошибка отправки рассылки пользователю ${u.id}:`, err);
+      }
     }
     const msg = await ctx.reply(
       `✅ <b>Рассылка завершена!</b>\n\n` +
-      `Отправлено ${successCount} из ${users.length} пользователям Magnum Stars. 🚀`,
+      `Отправлено ${successCount} из ${users.length} пользователям ${process.env.BOT_NAME}. 🚀`,
       { parse_mode: 'HTML' }
     );
     deleteNotification(ctx, msg.message_id);
@@ -1038,7 +1084,7 @@ bot.on('message', async (ctx) => {
       return;
     }
     if (promo.activations_left === 0) {
-      const msg = await ctx.reply('⚠️ <b>Промокод исчерпан!</b>\n\nИщи новые коды в наших каналах! 📢', { parse_mode: 'HTML' });
+      const msg = await ctx.reply(`⚠️ <b>Промокод исчерпан!</b>\n\nИщи новые коды в наших каналах ${process.env.BOT_NAME}! 📢`, { parse_mode: 'HTML' });
       deleteNotification(ctx, msg.message_id);
       ctx.session.waitingForCode = false;
       return;
@@ -1058,7 +1104,7 @@ bot.on('message', async (ctx) => {
       code
     ]);
     user = db.get('SELECT * FROM users WHERE id = ?', [id]);
-    updateUserTitle(ctx, id); // Проверка титула
+    updateUserTitle(ctx, id);
     const msg = await ctx.reply(
       `✅ <b>Промокод активирован!</b> 🎉\n\n` +
       `Ты получил <b>${promo.reward} звёзд</b>! Твой баланс: ${user.stars} ⭐`,
@@ -1078,7 +1124,7 @@ bot.on('message', async (ctx) => {
       const msg = await ctx.reply(
         '⚠️ <b>Неверный формат!</b>\n\n' +
         'Используй: <code>КОД ЗВЁЗДЫ АКТИВАЦИИ</code>\n' +
-        'Пример: <code>STAR2023 10 5</code>',
+        'Пример: <code>STAR2025 10 5</code>',
         { parse_mode: 'HTML' }
       );
       deleteNotification(ctx, msg.message_id);
@@ -1091,25 +1137,74 @@ bot.on('message', async (ctx) => {
       const msg = await ctx.reply(
         '⚠️ <b>Неверный формат!</b>\n\n' +
         'Используй: <code>КОД ЗВЁЗДЫ АКТИВАЦИИ</code>\n' +
-        'Пример: <code>STAR2023 10 5</code>',
+        'Пример: <code>STAR2025 10 5</code>',
         { parse_mode: 'HTML' }
       );
       deleteNotification(ctx, msg.message_id);
       return;
     }
-    db.run('INSERT INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)', [
-      code,
-      reward,
-      activations,
-      JSON.stringify([])
-    ]);
-    const msg = await ctx.reply(
-      `✅ <b>Промокод "${code}"</b> добавлен! 🎉\n\n` +
-      `Награда: ${reward} звёзд, активаций: ${activations}.`,
-      { parse_mode: 'HTML' }
-    );
-    deleteNotification(ctx, msg.message_id);
-    ctx.session.waitingForPromo = false;
+    try {
+      db.run('INSERT INTO promo_codes (code, reward, activations_left, used_by) VALUES (?, ?, ?, ?)', [
+        code,
+        reward,
+        activations,
+        JSON.stringify([])
+      ]);
+      const msg = await ctx.reply(
+        `✅ <b>Промокод "${code}"</b> добавлен! 🎉\n\n` +
+        `Награда: ${reward} звёзд, активаций: ${activations}.`,
+        { parse_mode: 'HTML' }
+      );
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForPromo = false;
+    } catch (err) {
+      console.error('Ошибка добавления промокода:', err);
+      const msg = await ctx.reply('❌ Ошибка при добавлении промокода. Проверь уникальность кода!', { parse_mode: 'HTML' });
+      deleteNotification(ctx, msg.message_id);
+    }
+    return;
+  }
+
+  if (ctx.session?.waitingForTask && ADMIN_IDS.includes(id)) {
+    const parts = ctx.message.text.trim().split(/\s+/);
+    if (parts.length < 4) {
+      const msg = await ctx.reply(
+        `⚠️ <b>Неверный формат!</b>\n\n` +
+        `Используй: <code>ТИП ОПИСАНИЕ ЦЕЛЬ НАГРАДА</code>\n` +
+        `Пример: <code>subscribe_channel Подпишись на ${TASK_CHANNEL} 1 5</code>`,
+        { parse_mode: 'HTML' }
+      );
+      deleteNotification(ctx, msg.message_id);
+      return;
+    }
+    const [type, ...rest] = parts;
+    const description = rest.slice(0, -2).join(' ');
+    const goal = parseInt(rest[rest.length - 2]);
+    const reward = parseInt(rest[rest.length - 1]);
+    if (!type || isNaN(goal) || isNaN(reward)) {
+      const msg = await ctx.reply(
+        `⚠️ <b>Неверный формат!</b>\n\n` +
+        `Используй: <code>ТИП ОПИСАНИЕ ЦЕЛЬ НАГРАДА</code>\n` +
+        `Пример: <code>subscribe_channel Подпишись на ${TASK_CHANNEL} 1 5</code>`,
+        { parse_mode: 'HTML' }
+      );
+      deleteNotification(ctx, msg.message_id);
+      return;
+    }
+    try {
+      db.run('INSERT INTO tasks (type, description, goal, reward) VALUES (?, ?, ?, ?)', [type, description, goal, reward]);
+      const msg = await ctx.reply(
+        `✅ <b>Задание "${description}"</b> добавлено! 🎉\n\n` +
+        `Тип: ${type}, Цель: ${goal}, Награда: ${reward} звёзд.`,
+        { parse_mode: 'HTML' }
+      );
+      deleteNotification(ctx, msg.message_id);
+      ctx.session.waitingForTask = false;
+    } catch (err) {
+      console.error('Ошибка добавления задания:', err);
+      const msg = await ctx.reply('❌ Ошибка при добавлении задания. Проверь формат и уникальность типа!', { parse_mode: 'HTML' });
+      deleteNotification(ctx, msg.message_id);
+    }
     return;
   }
 
@@ -1161,7 +1256,7 @@ bot.on('message', async (ctx) => {
       ticket.user_id,
       `📞 <b>Ответ на тикет #${ticketId}</b>\n\n${replyText}`,
       { parse_mode: 'HTML' }
-    );
+    ).catch(err => console.error(`Ошибка уведомления пользователя ${ticket.user_id}:`, err));
     deleteNotification(ctx, userMsg.message_id);
     if (fileIds.length > 0) {
       for (const fileId of fileIds) {
@@ -1182,4 +1277,8 @@ bot.on('message', async (ctx) => {
 });
 
 // Запуск бота
-bot.launch().then(() => console.log('🤖 Бот Magnum Stars запущен!')).catch(err => console.error('Ошибка запуска:', err));
+bot.launch().then(() => console.log(`🤖 Бот ${process.env.BOT_NAME} запущен!`)).catch(err => console.error('Ошибка запуска:', err));
+
+// Обработка graceful shutdown
+process.once('SIGINT', () => bot.stop('SIGINT'));
+process.once('SIGTERM', () => bot.stop('SIGTERM'));
